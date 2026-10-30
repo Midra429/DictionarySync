@@ -1,0 +1,317 @@
+<resources>
+    <string name="app_name">DictionarySync</string>
+
+    <!-- 共通 -->
+    <string name="nav_sources">ソース</string>
+    <string name="nav_settings">設定</string>
+    <string name="action_back">戻る</string>
+    <string name="action_close">閉じる</string>
+    <string name="action_cancel">キャンセル</string>
+    <string name="action_more">その他の操作</string>
+    <string name="error_title">操作できませんでした</string>
+    <string name="error_code">エラーコード: %1$s</string>
+    <string name="batch_result">%1$d件を受け付けました</string>
+    <string name="batch_result_failed">%1$d件を受け付けました。%2$d件は実行できませんでした</string>
+    <string name="batch_result_failed_hint">実行できなかったソースは選択したままです</string>
+
+    <!-- ソース一覧 -->
+    <string name="sources_title">ソース</string>
+    <string name="sources_subtitle_empty">未登録</string>
+    <string name="sources_subtitle_ok">%1$d件・すべて正常</string>
+    <string name="sources_subtitle_attention">%1$d件・%2$d件要確認</string>
+    <string name="sources_subtitle_working">%1$d件・処理中</string>
+    <string name="action_add_source">ソースを追加</string>
+    <string name="action_sync_all">すべて同期</string>
+    <string name="action_select">選択</string>
+    <string name="sources_loading">読み込み中</string>
+    <string name="sources_empty_title">ソースがありません</string>
+    <string name="sources_empty_body">辞書ファイルのURLを登録すると、単語を取得してユーザー辞書に反映します。</string>
+    <string name="sources_limit_reached">ソースは最大20件まで登録できます</string>
+    <string name="source_words">%1$s語</string>
+    <string name="source_interval_every">%1$sごと</string>
+    <string name="source_updated_never">未取得</string>
+    <string name="source_updated_within_hour">1時間以内に更新</string>
+    <string name="source_updated_hours">%1$d時間前に更新</string>
+    <string name="source_updated_date">%1$sに更新</string>
+    <string name="source_switch_on">%1$s、有効</string>
+    <string name="source_switch_off">%1$s、無効</string>
+    <string name="source_selected">%1$s、選択済み</string>
+    <string name="source_unselected">%1$s、未選択</string>
+    <string name="source_start_selection">選択を開始</string>
+    <string name="menu_sync_now">今すぐ同期</string>
+    <string name="menu_edit">編集</string>
+    <string name="menu_delete">削除</string>
+    <string name="menu_retry">反映を再試行</string>
+
+    <!-- ソースの状態（1ソースにつき1つ） -->
+    <string name="status_synced">反映済み</string>
+    <string name="status_fetching">取得中</string>
+    <string name="status_queued">同期待ち</string>
+    <string name="status_network_wait">接続待ち</string>
+    <string name="status_server_wait">%1$sまで待機中</string>
+    <string name="status_retry_wait">%1$sに再試行</string>
+    <string name="status_reflecting">反映中</string>
+    <string name="status_reflect_pending">未反映</string>
+    <string name="status_reflect_queued">反映待ち</string>
+    <string name="status_deleting">ユーザー辞書から削除中</string>
+    <string name="status_reflect_failed">反映できませんでした</string>
+    <string name="status_interrupted">反映が中断しています</string>
+    <string name="status_fetch_failed">取得できませんでした（前回のデータを使用中）</string>
+    <string name="status_fetch_interrupted">取得が中断されました（前回のデータを使用中）</string>
+    <string name="status_disabled">無効</string>
+    <string name="status_release_pending">ユーザー辞書からの削除待ち</string>
+    <string name="status_delete_pending">削除が完了していません</string>
+    <string name="status_not_fetched">未取得</string>
+    <string name="status_reverted">反映を取り消しました</string>
+
+    <!-- 理由（短文） -->
+    <string name="reason_diagnosis">対応診断が必要です</string>
+    <string name="reason_ime_disabled">キーボード一覧でDictionarySyncを有効にしてください</string>
+    <string name="reason_plan_first">中断している反映を先に確認してください</string>
+    <string name="reason_refetch">取得し直してください</string>
+    <string name="reason_external">端末側で編集・削除された単語があるため停止しました</string>
+    <string name="reason_unknown">結果を確認できない単語があるため停止しました</string>
+    <string name="reason_delete_failed">削除の結果を確認できないため停止しました</string>
+    <string name="reason_stale">内容が変わりました。もう一度確認してください</string>
+    <string name="reason_incomplete">確認できない単語があるため、完全には元に戻せません</string>
+    <string name="reason_wifi">Wi-Fi接続（VPNなし）を待っています</string>
+    <string name="reason_network">インターネット接続を待っています</string>
+    <string name="reason_server_wait">配布元の指示で待機中です。しばらくしてから再試行してください</string>
+    <string name="reason_csv_manual">CSVファイルのようです。形式で「Apple追加辞書CSV」を選んでください</string>
+    <string name="reason_columns">列の数が正しくありません（TSVは3〜4列、CSVは3〜5列）</string>
+    <string name="reason_unsupported">対応していない辞書形式です（SKK・Rimeなど）</string>
+    <string name="reason_format">形式に対応していないか、ファイルが壊れています</string>
+    <string name="reason_encoding">文字コードを判別できません。詳細設定で指定してください</string>
+    <string name="reason_size">ファイルが大きすぎます（上限 20 MiB）</string>
+    <string name="reason_http">配布元がエラーを返しました（%1$s）</string>
+    <string name="reason_url">https:// で始まる辞書ファイルのURLを入力してください</string>
+    <string name="reason_duplicate">このURLはすでに登録されています</string>
+    <string name="reason_name">名前を入力してください</string>
+    <string name="reason_locale">言語タグが正しくありません（例: ja、ja-JP）</string>
+    <string name="reason_empty">中身が空か、形式を判別できません</string>
+    <string name="reason_source_limit">ソースは最大20件まで登録できます</string>
+    <string name="reason_generic">処理を完了できませんでした</string>
+
+    <!-- お知らせ -->
+    <string name="banner_interrupted_title">反映が中断しています</string>
+    <string name="banner_interrupted_body">続きを反映するか取り消すかを選んでください。それまでほかのソースは待機します。</string>
+    <string name="banner_interrupted_action">確認する</string>
+    <string name="banner_diagnosis_title">反映するには対応診断が必要です</string>
+    <string name="banner_ime_title">キーボード一覧でDictionarySyncを有効にしてください</string>
+    <string name="banner_unfinished_title">未完了の診断があります</string>
+    <string name="banner_diagnosis_body">単語の取得と閲覧はこのまま使えます。</string>
+    <string name="banner_diagnosis_action">診断を開く</string>
+
+    <!-- 選択 -->
+    <string name="selection_count">%1$d件選択中</string>
+    <string name="selection_all">すべて選択</string>
+    <string name="selection_clear">選択を解除</string>
+    <string name="selection_exit">選択を終了</string>
+    <string name="action_enable">有効化</string>
+    <string name="action_disable">無効化</string>
+    <string name="action_delete">削除</string>
+    <string name="delete_title">%1$d件のソースを削除しますか？</string>
+    <string name="delete_body">追加した単語をユーザー辞書から削除します。手動で登録した単語や、ほかのソースと共通の単語は残ります。</string>
+
+    <!-- 追加・編集 -->
+    <string name="editor_add_title">ソースを追加</string>
+    <string name="editor_edit_title">ソースを編集</string>
+    <string name="editor_name">名前</string>
+    <string name="editor_url">辞書ファイルのURL</string>
+    <string name="editor_url_support">ファイルを直接取得できる https:// のURL</string>
+    <string name="editor_options">詳細設定</string>
+    <string name="editor_options_summary">形式: %1$s · 言語: %2$s · 文字コード: %3$s</string>
+    <string name="editor_format">形式</string>
+    <string name="editor_language">言語</string>
+    <string name="editor_language_tag">言語タグ（例: ja-JP）</string>
+    <string name="editor_language_auto_note">言語情報がない場合は日本語として扱います</string>
+    <string name="editor_encoding">文字コード</string>
+    <string name="editor_interval">自動同期の間隔</string>
+    <string name="editor_add">追加</string>
+    <string name="editor_save">保存</string>
+    <string name="editor_fetching">取得しています</string>
+    <string name="editor_stop">取得を中止</string>
+    <string name="editor_keep_note">URLや形式などの変更は、取得に成功してから反映されます。</string>
+    <string name="editor_server_wait">%1$sまで再試行できません</string>
+    <string name="choice_auto">自動</string>
+    <string name="choice_tsv">IME共通TSV</string>
+    <string name="choice_ms">Microsoft IME形式（TSV）</string>
+    <string name="choice_plist">Apple XML plist</string>
+    <string name="choice_csv">Apple追加辞書CSV</string>
+    <string name="choice_ja">日本語</string>
+    <string name="choice_en">英語</string>
+    <string name="choice_all">すべての言語</string>
+    <string name="choice_custom">言語タグを指定</string>
+    <string name="choice_cp932">Windows-31J（CP932）</string>
+    <string name="hint_format_auto">中身から判定します（CSVは手動で選択）</string>
+    <string name="hint_format_tsv">タブ区切りのテキスト（Mozc・Gboard・ATOKなど）</string>
+    <string name="hint_format_ms">Microsoft IMEの書き出しファイル</string>
+    <string name="hint_format_plist">Mac・iPhoneのテキスト置換の書き出し</string>
+    <string name="hint_format_csv">「読み,単語,品詞」のカンマ区切り</string>
+    <string name="hint_encoding_auto">中身から判定します（Windows-31Jは手動で選択）</string>
+    <string name="interval_hours">%1$d時間</string>
+    <string name="interval_days">%1$d日</string>
+
+    <!-- 単語一覧 -->
+    <string name="entries_read_only">閲覧のみ</string>
+    <string name="entries_languages">%1$d言語</string>
+    <string name="entries_search">単語・読みを検索</string>
+    <string name="entries_clear_search">検索を消去</string>
+    <string name="entries_loading">読み込み中</string>
+    <string name="entries_load_error">単語を読み込めませんでした</string>
+    <string name="entries_no_matches">一致する単語はありません</string>
+    <string name="entries_empty">単語はまだありません</string>
+    <string name="entries_placeholder">ソースを選ぶと単語を表示します</string>
+    <string name="entries_edit_source">ソースを編集</string>
+    <string name="entries_skipped_lines">列が足りない%1$d行を読み飛ばしました（最初は%2$d行目）</string>
+
+    <!-- 中断した反映の確認 -->
+    <string name="review_title_apply">中断した反映</string>
+    <string name="review_title_resync">関連ソースを再反映</string>
+    <string name="review_title_compensate">反映を取り消す</string>
+    <string name="review_title_remove">未完了のソースを削除</string>
+    <string name="review_source">対象: %1$s</string>
+    <string name="review_stat_desired">反映後の単語</string>
+    <string name="review_stat_add">追加</string>
+    <string name="review_stat_release">対象外</string>
+    <string name="review_stat_delete">削除</string>
+    <string name="review_stat_shared">共通</string>
+    <string name="review_stat_protected">保護・保留</string>
+    <string name="review_unknown_source">（削除済みのソース）</string>
+    <string name="review_choose">続きを反映するか、別の方法を選んでください。</string>
+    <string name="review_open_resync">関連ソースをまとめて再反映する</string>
+    <string name="review_open_compensate">今回の反映を取り消して元に戻す</string>
+    <string name="review_resync_detail">関連するソースの単語を照合し直します。端末側で編集された単語は残します。</string>
+    <string name="review_compensate_detail">今回追加した単語を取り消し、削除した単語を戻します。編集された単語や確認できない単語は残します。</string>
+    <string name="review_remove_detail">途中まで追加した単語を削除してから、ソースを削除します。手動で登録した単語や、ほかのソースと共通の単語は残します。</string>
+    <string name="review_related">まとめて処理するソース: %1$s</string>
+    <string name="review_blockers">未解決: %1$s</string>
+    <string name="review_blockers_detail">確認できる範囲だけを処理します。</string>
+    <string name="review_safety">既存の単語は上書きしません。削除するのは、このアプリが追加して変更されていない単語だけです。</string>
+    <string name="review_ime_note">変換候補に出るかはキーボードによります。</string>
+    <string name="review_apply_apply">続きを反映</string>
+    <string name="review_apply_resync">再反映を実行</string>
+    <string name="review_apply_compensate">取り消しを実行</string>
+    <string name="review_apply_remove">削除を実行</string>
+    <string name="review_cancel_plan">この反映を取り消す</string>
+    <string name="review_differences">すべての差分</string>
+    <string name="review_differences_count">追加 %1$d・対象外 %2$d</string>
+    <string name="review_diff_add">追加</string>
+    <string name="review_diff_delete">削除</string>
+    <string name="review_diff_release">対象外（単語は残す）</string>
+    <string name="review_diff_entry">%1$s → %2$s [%3$s]</string>
+    <string name="review_identity">識別子: %1$s</string>
+    <string name="review_no_reading">（読みなし）</string>
+
+    <!-- 設定 -->
+    <string name="settings_title">設定</string>
+    <string name="settings_section_sync">同期</string>
+    <string name="settings_section_about">このアプリについて</string>
+    <string name="settings_wifi">Wi-Fiのみで取得</string>
+    <string name="settings_wifi_detail">手動の同期にも適用します。VPN利用中は待機します。</string>
+    <string name="settings_section_background">バックグラウンド実行</string>
+    <string name="settings_diagnostics">端末の対応診断</string>
+    <string name="settings_diag_ready">完了しています</string>
+    <string name="settings_diag_required">ユーザー辞書への反映に必要です</string>
+    <string name="settings_diag_ime">キーボードの有効化が必要です</string>
+    <string name="settings_diag_unfinished">未完了の診断があります</string>
+    <string name="settings_diag_unsupported">この端末ではユーザー辞書に反映できません</string>
+    <string name="settings_about_body">辞書ファイルを取得して、端末のユーザー辞書に反映します。入力内容は収集しません。</string>
+    <string name="settings_version">バージョン %1$s</string>
+    <string name="settings_licenses">ライセンス</string>
+    <string name="settings_licenses_body">DictionarySync・AndroidX・Kotlin・Material Icons／Symbols（Apache License 2.0）</string>
+
+    <!-- 端末の対応診断 -->
+    <string name="diag_title">端末の対応診断</string>
+    <string name="diag_intro">ユーザー辞書に安全に反映できるかを確認します。単語の取得と閲覧には不要です。</string>
+    <string name="diag_ready">診断は完了しています。</string>
+    <string name="diag_step_ime">キーボードを有効にする</string>
+    <string name="diag_step_ime_body">ユーザー辞書の読み書きに必要です。入力内容についての警告が表示されますが、入力内容の読み取り・送信は行いません。普段のキーボードを切り替える必要はありません。</string>
+    <string name="diag_ime_on">有効になっています</string>
+    <string name="diag_ime_off">まだ有効になっていません</string>
+    <string name="diag_open_ime">キーボードの設定を開く</string>
+    <string name="diag_step_read">確認用の単語を登録して読み取る</string>
+    <string name="diag_step_read_body">端末のユーザー辞書に次の単語を登録してください。言語は日本語、ショートカットは空欄で構いません。</string>
+    <string name="diag_copy">確認用の単語をコピー</string>
+    <string name="diag_copied">コピーしました</string>
+    <string name="diag_marker_keep">同期を使う間は、この単語を削除・編集しないでください。</string>
+    <string name="diag_open_dictionary">ユーザー辞書の設定を開く</string>
+    <string name="diag_confirm_marker">単語を登録した</string>
+    <string name="diag_run_read">読み取りを確認</string>
+    <string name="diag_step_write">書き込みを確認する</string>
+    <string name="diag_step_write_body">テスト用の単語を1件追加し、変更・削除できるかを確かめます。終わったら削除します。</string>
+    <string name="diag_run_write">書き込みを確認</string>
+    <string name="diag_write_needs_read">先に手順2を完了してください。</string>
+    <string name="diag_write_confirm_title">書き込みの確認を始めますか？</string>
+    <string name="diag_write_confirm_body">テスト用の単語を1件追加し、確認後に削除します。途中で止まった場合は、この画面から後始末できます。</string>
+    <string name="diag_begin">開始</string>
+    <string name="diag_done">完了</string>
+    <string name="diag_unfinished">未完了の診断があります。照合してから後始末してください。</string>
+    <string name="diag_inspect">状態を照合（読み取りのみ）</string>
+    <string name="diag_cleanup">テスト用の単語を後始末</string>
+    <string name="diag_show_log">診断記録を表示</string>
+    <string name="diag_hide_log">診断記録を閉じる</string>
+    <string name="diag_log_note">前回の記録（端末内のみ）</string>
+
+    <!-- 診断の結果（ProbeViewModel） -->
+    <string name="probe_loading">準備中…</string>
+    <string name="probe_not_run">まだ確認していません。</string>
+    <string name="probe_read_confirmed">読み取れました。続けて書き込みを確認してください。</string>
+    <string name="probe_empty">読み取れませんでした。キーボードの有効化と単語の登録を確認してください。</string>
+    <string name="probe_not_visible">確認用の単語が見つかりません。登録されているか確認してください。</string>
+    <string name="probe_ambiguous">確認用の単語が複数あります。1件だけにしてください。</string>
+    <string name="probe_access_denied">ユーザー辞書の読み取りが拒否されました。</string>
+    <string name="probe_null_cursor">ユーザー辞書から応答がありませんでした。</string>
+    <string name="probe_missing_column">ユーザー辞書の応答に必要な項目がありません。読み取りは未確認です。</string>
+    <string name="probe_invalid_query">ユーザー辞書が照会を受け付けませんでした。</string>
+    <string name="probe_database_error">ユーザー辞書でエラーが起きました。</string>
+    <string name="probe_remote_error">ユーザー辞書との通信に失敗しました。読み取りは未確認です。</string>
+    <string name="probe_unknown_error">読み取りに失敗しました。</string>
+    <string name="probe_storage_error">診断の記録を保存できないため停止しました。</string>
+    <string name="probe_trial_done">確認が完了しました。</string>
+    <string name="probe_trial_stopped">確認を停止しました。記録と照合してください。</string>
+    <string name="probe_settings_unavailable">設定を開けません。端末の設定アプリから開いてください。</string>
+
+    <!-- バックグラウンド実行 -->
+    <string name="background_battery">電池の最適化から除外</string>
+    <string name="background_battery_on">自動同期が遅れることがあります</string>
+    <string name="background_battery_off">除外されています</string>
+    <string name="background_settings_unavailable">設定を開けません。端末の設定からDictionarySyncのアプリ情報を開いてください。</string>
+    <string name="background_notifications">同期の通知</string>
+    <string name="background_notifications_on">許可されています</string>
+    <string name="background_notifications_off">失敗しても通知されません</string>
+
+    <!-- 通知 -->
+    <string name="notify_channel_progress">同期の進行状況</string>
+    <string name="notify_channel_progress_detail">取得中・反映中に表示します</string>
+    <string name="notify_channel_changes">ユーザー辞書の変更</string>
+    <string name="notify_channel_changes_detail">反映で単語が追加・削除されたときに通知します</string>
+    <string name="notify_channel_failures">同期の失敗</string>
+    <string name="notify_channel_failures_detail">自動の再試行でも取得できなかったときや、反映できなかったときに通知します</string>
+    <string name="notify_fetching">辞書を取得中</string>
+    <string name="notify_applying">ユーザー辞書に反映中</string>
+    <string name="notify_changed">%1$sをユーザー辞書に反映しました</string>
+    <string name="notify_added">%1$s語を追加</string>
+    <string name="notify_removed">%1$s語を削除</string>
+    <string name="notify_separator">、</string>
+    <string name="notify_fetch_failed">%1$sを取得できませんでした</string>
+    <string name="notify_apply_failed">%1$sを反映できませんでした</string>
+
+    <!-- 初回セットアップ -->
+    <string name="setup_title">はじめに</string>
+    <string name="setup_intro">辞書ファイルを定期的に取得して、端末のユーザー辞書に反映します。次の3つを設定してください。</string>
+    <string name="setup_step_background">バックグラウンドでの実行を許可する</string>
+    <string name="setup_step_background_body">自動同期が遅れないように、電池の最適化から除外します。</string>
+    <string name="setup_step_notifications">同期の通知を許可する</string>
+    <string name="setup_step_notifications_body">同期の失敗やユーザー辞書の変更に気づけるように、通知を許可します。</string>
+    <string name="setup_step_dictionary">ユーザー辞書への反映を準備する</string>
+    <string name="setup_step_dictionary_body">キーボードを有効にして、ユーザー辞書の読み書きを確認します。</string>
+    <string name="setup_open_diagnostics">対応診断を開く</string>
+    <string name="setup_start">はじめる</string>
+    <string name="setup_later">あとから設定画面でも行えます。</string>
+
+    <!-- キーボード（IME） -->
+    <string name="ime_name">DictionarySync 辞書同期</string>
+    <string name="ime_panel_explanation">同期用のキーボードです。文字入力はできません。普段のキーボードに切り替えてください。</string>
+    <string name="ime_switch_keyboard">キーボードを切り替える</string>
+</resources>
