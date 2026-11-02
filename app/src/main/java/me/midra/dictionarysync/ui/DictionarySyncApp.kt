@@ -22,10 +22,8 @@ import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
-import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import me.midra.dictionarysync.R
-import me.midra.dictionarysync.data.source.SourceRules
 import me.midra.dictionarysync.ui.common.AppIcons
 import me.midra.dictionarysync.ui.common.ErrorDialog
 import me.midra.dictionarysync.ui.editor.SourceEditorDialog
@@ -63,14 +61,11 @@ fun DictionarySyncApp(model: AppViewModel, setup: Boolean = false, diagnostics: 
         if (backStack.last() != DiagnosticsRoute) backStack.add(DiagnosticsRoute)
     }
     fun finishSetup() { model.settings.finishSetup(); showSources(); backStack[0] = SourcesRoute }
-    // Shared by the list's FAB and the rail's, so the limit message shows on the source list either way.
-    val sources by model.sources.sources.collectAsStateWithLifecycle()
+    // Shared by the list's FAB and the rail's.
     val snackbar = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
-    val limitMessage = stringResource(R.string.sources_limit_reached)
     fun addSource() {
         if (inSettings) showSources()
-        if (sources.size >= SourceRules.MAX_SOURCES) scope.launch { snackbar.showSnackbar(limitMessage) } else model.form.edit(null)
+        model.form.edit(null)
     }
     // Both can change in system settings while the app is in the background.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { model.settings.refreshAll() }

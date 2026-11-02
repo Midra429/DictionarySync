@@ -7,6 +7,7 @@ import me.midra.dictionarysync.data.local.DictionaryDatabase
 import me.midra.dictionarysync.data.local.SourceEntity
 import me.midra.dictionarysync.data.local.SourceLifecycle
 import me.midra.dictionarysync.data.local.SyncState
+import me.midra.dictionarysync.data.source.MemoryBudget
 
 /**
  * A source's place in the shared dictionary: its desired state (enabled, disabled, deleted) and the plans that bring
@@ -32,6 +33,8 @@ class SourceSync(private val context: Context, private val db: DictionaryDatabas
         val removing = deleting || !source.enabled
         val snapshot = if (removing) null else source.latestSnapshot?.let { library.snapshot(it) } ?: throw SyncStopped("FETCH_REQUIRED")
         if (snapshot != null && snapshot.revision != source.revision) throw SyncStopped("REFETCH_SETTINGS_CHANGED")
+        // Checked before the entries are loaded: the engine checks the whole managed set once the keys exist.
+        if (snapshot != null && snapshot.count > MemoryBudget().maxKeys) throw SyncStopped("KEY_LIMIT")
         val desired = if (snapshot == null) emptyList() else library.entries(snapshot.id).map { SyncKey.of(it.locale, it.word, it.reading) }
         return engine().plan(source.id, source.revision, source.activeSnapshot, snapshot?.id, snapshot?.bodyHash ?: "REMOVE",
             desired, retainSource = removing && !deleting)

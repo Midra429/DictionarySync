@@ -2,6 +2,7 @@ package me.midra.dictionarysync.library
 
 import java.nio.charset.Charset
 import me.midra.dictionarysync.data.parser.*
+import me.midra.dictionarysync.data.source.MemoryBudget
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -238,20 +239,36 @@ class FormatContractTest {
         for (bytes in listOf(byteArrayOf(0xc3.toByte(), 0x28), byteArrayOf(-1, -2, 0, 0), byteArrayOf(0, 0, -2, -1), byteArrayOf(0x1f, 0x8b.toByte()))) {
             assertThrows(DictionaryProblem::class.java) { DictionaryParser.parse(bytes) }
         }
-        assertEquals("SIZE_LIMIT", assertThrows(DictionaryProblem::class.java) { DictionaryParser.parse(ByteArray(TsvParser.MAX_BYTES + 1)) }.code)
+        // A heap that leaves room for 1 KiB of body: the limit follows memory, not a fixed size.
+        val budget = MemoryBudget(MemoryBudget.heapFor(1024 * MemoryBudget.PER_BYTE))
+        assertEquals(1024L, budget.maxBytes)
+        assertEquals("SIZE_LIMIT", assertThrows(DictionaryProblem::class.java) { DictionaryParser.parse(ByteArray(1025) { 'a'.code.toByte() }, budget = budget) }.code)
     }
-    @Test fun entryLimitAppliesToXmlAndCsvWithoutReturningPartialResults() {
-        rejects(plist(dict().repeat(TsvParser.MAX_ENTRIES + 1)), code = "ENTRY_LIMIT")
-        rejects("r,w,p,,\n".repeat(TsvParser.MAX_ENTRIES + 1), "APPLE_CSV", "ENTRY_LIMIT")
+    @Test fun entryLimitAppliesToEveryFormatWithoutReturningPartialResults() {
+        // Room for the body and exactly ten entries on top of it.
+        fun budget(bytes: ByteArray) = MemoryBudget(MemoryBudget.heapFor(bytes.size * MemoryBudget.PER_BYTE + 10 * MemoryBudget.PER_ENTRY))
+        fun limited(text: String, format: String = "AUTO") = text.toByteArray().let { bytes ->
+            assertEquals("ENTRY_LIMIT", assertThrows(DictionaryProblem::class.java) { DictionaryParser.parse(bytes, format = format, budget = budget(bytes)) }.code)
+        }
+        fun fits(text: String, format: String = "AUTO") = text.toByteArray().let { bytes ->
+            assertEquals(10, DictionaryParser.parse(bytes, format = format, budget = budget(bytes)).entries.size)
+        }
+        limited(plist(dict().repeat(11))); fits(plist(dict().repeat(10)))
+        limited("r,w,p,,\n".repeat(11), "APPLE_CSV"); fits("r,w,p,,\n".repeat(10), "APPLE_CSV")
+        limited("r\tw\tp\n".repeat(11)); fits("r\tw\tp\n".repeat(10))
     }
-    @Test fun hundredThousandWordSourcesFitTheByteLimitInEveryFormat() {
-        val n = TsvParser.MAX_ENTRIES
+    @Test fun formerFixedLimitsNoLongerApply() {
+        // Twice the former 100,000-entry limit, in the formats with the largest bodies per entry.
+        val n = 200_000
         // Apple's own export indents every element; Microsoft IME exports UTF-16LE.
         val apple = (1..n).joinToString("", "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<array>\n", "</array>\n</plist>\n") {
             "\t<dict>\n\t\t<key>phrase</key>\n\t\t<string>人工の単語表記$it</string>\n\t\t<key>shortcut</key>\n\t\t<string>じんこうのたんご$it</string>\n\t</dict>\n"
         }
-        assertEquals(n, DictionaryParser.parse(apple.toByteArray()).entries.size)
         val ms = (1..n).joinToString("\r\n", "!Microsoft IME Dictionary Tool\r\n!Format:WORDLIST\r\n") { "じんこうのたんご$it\t人工の単語表記$it\t名詞\t人工的なコメント" }
-        assertEquals(n, DictionaryParser.parse(byteArrayOf(-1, -2) + ms.toByteArray(Charsets.UTF_16LE)).entries.size)
+        for (bytes in listOf(apple.toByteArray(), byteArrayOf(-1, -2) + ms.toByteArray(Charsets.UTF_16LE))) {
+            // Only memory limits a dictionary now; a device whose heap cannot hold this one skips the check.
+            org.junit.Assume.assumeTrue(MemoryBudget().maxEntries(bytes.size.toLong()) >= n)
+            assertEquals(n, DictionaryParser.parse(bytes).entries.size)
+        }
     }
 }

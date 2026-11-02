@@ -3,6 +3,7 @@ package me.midra.dictionarysync.sync
 import java.util.UUID
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import me.midra.dictionarysync.data.source.MemoryBudget
 import me.midra.dictionarysync.probe.ProbeRow
 
 /**
@@ -11,7 +12,8 @@ import me.midra.dictionarysync.probe.ProbeRow
  * with a few IN queries, so a 100,000-word source does not cost one access check and table scan per word.
  */
 class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway, private val installationId: String,
-    private val now: () -> Long = System::currentTimeMillis, private val batch: Int = BATCH) {
+    private val now: () -> Long = System::currentTimeMillis, private val batch: Int = BATCH,
+    private val maxKeys: Long = MemoryBudget().maxKeys) {
     internal suspend fun installation() {
         val id = store.installation()
         if (id == null) {
@@ -38,8 +40,9 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
         val wanted = desired.distinctBy { it.id }
         val removed = old - wanted.map { it.id }.toSet()
         val allKeys = (store.keys(removed) + wanted).associateBy { it.id }
-        // Include the transient old/new union. Never free another application's rows to fit a limit.
-        if (store.ownedCount() + wanted.size - store.ownedCount(wanted.map { it.id }) > KEY_LIMIT) throw SyncStopped("KEY_LIMIT")
+        // Recovery reads every source's references, so the whole managed set, including the transient old/new union,
+        // must fit in memory. The Provider has no limit of its own. Never free another application's rows to fit.
+        if (store.ownedCount() + wanted.size - store.ownedCount(wanted.map { it.id }) > maxKeys) throw SyncStopped("KEY_LIMIT")
         // The reference generation stands for every source's references at planning time.
         val token = SyncCodec.hash(listOf(sourceId, revision.toString(), oldSnapshot, snapshot, bodyHash,
             SyncCodec.pack(wanted.map { it.id }.sorted()), SyncCodec.pack(removed.sorted()), store.referenceVersion()))
@@ -409,7 +412,5 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
         internal fun needsInsert(binding: ProviderBinding?) = binding == null || binding.ownership == Ownership.RELEASED
         /** Below SQLite's 999 bound-variable limit, so a batch is one IN query on older Android versions. */
         const val BATCH = 900
-        /** Managed shared-dictionary rows, including the old/new union while a source is replaced. */
-        const val KEY_LIMIT = 200_000
     }
 }

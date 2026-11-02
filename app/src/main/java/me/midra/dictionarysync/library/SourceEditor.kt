@@ -17,7 +17,6 @@ import me.midra.dictionarysync.data.local.SyncState
 import me.midra.dictionarysync.data.parser.DictionaryParser
 import me.midra.dictionarysync.data.parser.DictionaryProblem
 import me.midra.dictionarysync.data.source.DictionaryDownload
-import me.midra.dictionarysync.data.source.SourceRules
 import me.midra.dictionarysync.sync.SyncCoordinator
 import me.midra.dictionarysync.sync.SyncStopped
 
@@ -65,10 +64,7 @@ class SourceEditor(
         if (db.sync().plans().any { !it.state.terminal }) throw SyncStopped("RECOVER_PLAN_FIRST")
         val listed = dao.sources()
         if (listed.any { it.url == settings.url && it.id != id }) throw DictionaryProblem("DUPLICATE_URL")
-        if (id == null) {
-            if (listed.size >= SourceRules.MAX_SOURCES) throw DictionaryProblem("SOURCE_LIMIT")
-            return null
-        }
+        if (id == null) return null
         val old = dao.source(id) ?: throw DictionaryProblem("SOURCE_MISSING")
         if (!old.listed) throw SyncStopped("SOURCE_DELETE_PENDING")
         return old

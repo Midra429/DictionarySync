@@ -12,9 +12,6 @@ data class ParsedDictionary(val entries: List<ParsedEntry>, val physicalLines: I
 
 /** Strict whole-document validation. Never returns a partially parsed dictionary. */
 object TsvParser {
-    // A 100,000-word dictionary in UTF-16 or Apple's indented plist is well over 10 MiB.
-    const val MAX_BYTES = 20 * 1024 * 1024
-    const val MAX_ENTRIES = 100_000
     private const val MS_HEADER = "!Microsoft IME Dictionary Tool"
     private const val GBOARD_HEADER = "# Gboard Dictionary version:"
     private const val GBOARD_FORMAT = "# Gboard Dictionary format:"
@@ -29,6 +26,43 @@ object TsvParser {
     fun parse(bytes: ByteArray, encoding: String = "AUTO", format: String = "AUTO", contentType: String? = null): ParsedDictionary {
         return DictionaryParser.parse(bytes, encoding, format, contentType)
     }
+
+    /**
+     * The lines of [text], split at CRLF, LF or CR exactly as `split(Regex("\r\n|\n|\r"))` does, but produced one at a
+     * time: a list of every line would hold a second copy of the whole body.
+     */
+    internal fun lines(text: String): Sequence<String> = sequence {
+        var start = 0
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            if (c == '\n' || c == '\r') {
+                yield(text.substring(start, i))
+                i += if (c == '\r' && i + 1 < text.length && text[i + 1] == '\n') 2 else 1
+                start = i
+            } else i++
+        }
+        yield(text.substring(start))
+    }
+
+    /** The number of physical lines: a final line break does not start another line. */
+    internal fun physicalLines(text: String): Int {
+        if (text.isEmpty()) return 0
+        var count = 1
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            if (c == '\n' || c == '\r') {
+                count++
+                i += if (c == '\r' && i + 1 < text.length && text[i + 1] == '\n') 2 else 1
+            } else i++
+        }
+        val last = text.lastOrNull()
+        return count - if (last == '\n' || last == '\r') 1 else 0
+    }
+
+    /** Refuses a dictionary whose entries would not fit in memory; no partial result is returned. */
+    internal fun checkEntries(count: Int, maxEntries: Long, line: Int? = null) { if (count > maxEntries) fail("ENTRY_LIMIT", line) }
 
     private fun dialect(first: String, line: Int): Dialect {
         val lower = first.lowercase(Locale.ROOT)
@@ -46,15 +80,14 @@ object TsvParser {
         }
     }
 
-    internal fun parseText(text: String, usedEncoding: String, format: String): ParsedDictionary {
-        val lines = text.split(Regex("\r\n|\n|\r"))
-        val firstIndex = lines.indexOfFirst { it.isNotBlank() }
-        val dialect = if (firstIndex < 0) Dialect.PLAIN else dialect(lines[firstIndex], firstIndex + 1)
+    internal fun parseText(text: String, usedEncoding: String, format: String, maxEntries: Long): ParsedDictionary {
+        val first = lines(text).withIndex().firstOrNull { it.value.isNotBlank() }
+        val dialect = if (first == null) Dialect.PLAIN else dialect(first.value, first.index + 1)
         val ms = dialect == Dialect.MS
         val gboard = dialect == Dialect.GBOARD_V1 || dialect == Dialect.GBOARD_V2
         if (format !in setOf("AUTO", "TSV", "MS_WORDLIST")) fail("UNSUPPORTED_FORMAT")
         if (format == "MS_WORDLIST" && !ms) fail("MS_HEADER_REQUIRED")
-        if (ms && lines.none { it == "!Format:WORDLIST" }) fail("MS_FORMAT_REQUIRED")
+        if (ms && lines(text).none { it == "!Format:WORDLIST" }) fail("MS_FORMAT_REQUIRED")
         val entries = ArrayList<ParsedEntry>()
         val languages = HashMap<String, String>()
         var gboardFormat = false
@@ -63,7 +96,7 @@ object TsvParser {
         // reported, rather than failing the file. A header-less automatic guess stays strict: the columns are its only evidence.
         val confirmed = structure
         val skipped = ArrayList<Int>()
-        lines.forEachIndexed { index, line ->
+        lines(text).forEachIndexed { index, line ->
             val number = index + 1
             if (line.toByteArray(Charsets.UTF_8).size > 64 * 1024) fail("RECORD_LIMIT", number)
             if (line.isEmpty()) return@forEachIndexed
@@ -108,13 +141,13 @@ object TsvParser {
                 ParsedEntry(number, fields[0], fields[1], fields[2], comment)
             }
             structure = true
-            if (entries.size > MAX_ENTRIES) fail("ENTRY_LIMIT", number)
+            checkEntries(entries.size, maxEntries, number)
         }
         if (dialect == Dialect.GBOARD_V2 && !gboardFormat) fail("GBOARD_FORMAT_REQUIRED")
         if (!structure) fail("AMBIGUOUS_EMPTY")
         // Nothing but short lines means the wrong format, not a dictionary with a few slips.
         if (entries.isEmpty() && skipped.isNotEmpty()) fail("TSV_COLUMNS_SHORT", skipped.first())
-        return ParsedDictionary(entries, lines.size - if (lines.last().isEmpty()) 1 else 0, dialect.parser, usedEncoding, skipped)
+        return ParsedDictionary(entries, physicalLines(text), dialect.parser, usedEncoding, skipped)
     }
 
     // Gboard repeats a few tags on every line; each distinct tag is validated once per file.

@@ -8,7 +8,6 @@ import java.security.MessageDigest
 import java.util.zip.GZIPInputStream
 import javax.net.ssl.HttpsURLConnection
 import me.midra.dictionarysync.data.parser.DictionaryProblem
-import me.midra.dictionarysync.data.parser.TsvParser
 
 interface DownloadRoute : AutoCloseable {
     fun check()
@@ -33,8 +32,11 @@ object ValidatorHeaders {
     }
 }
 
-/** Conditional headers are confined to the exact previously validated final URL on this route. */
-class Downloader(private val clock: () -> Long = System::nanoTime) {
+/**
+ * Conditional headers are confined to the exact previously validated final URL on this route. [maxBytes] is read per
+ * download, so a test can shrink it; by default it follows the heap ([MemoryBudget]).
+ */
+class Downloader(private val maxBytes: () -> Long = { MemoryBudget().maxBytes }, private val clock: () -> Long = System::nanoTime) {
     fun get(original: String, route: DownloadRoute, validators: HttpValidators? = null): Download {
         var uri = SourceRules.url(original)
         val visited = mutableSetOf<String>()
@@ -77,19 +79,20 @@ class Downloader(private val clock: () -> Long = System::nanoTime) {
                     if (status != 200) throw DictionaryProblem("HTTP_$status", retryAfter = if (status == 429 || status == 503) connection.getHeaderField("Retry-After") else null)
                     if (connection.getHeaderField("Content-Range") != null) throw DictionaryProblem("PARTIAL_RESPONSE")
                     val length = connection.getHeaderFieldLong("Content-Length", -1)
-                    if (length > TsvParser.MAX_BYTES) throw DictionaryProblem("SIZE_LIMIT")
+                    val limit = maxBytes().coerceAtMost(Int.MAX_VALUE - 8L)
+                    if (length > limit) throw DictionaryProblem("SIZE_LIMIT")
                     val encoding = connection.getHeaderField("Content-Encoding")?.trim()?.lowercase().orEmpty()
                     if (encoding !in setOf("", "identity", "gzip")) throw DictionaryProblem("CONTENT_ENCODING")
-                    val raw = LimitedStream(connection.inputStream, TsvParser.MAX_BYTES, ::check)
+                    val raw = LimitedStream(connection.inputStream, limit, ::check)
                     val stream = if (encoding == "gzip") GZIPInputStream(raw) else raw
-                    val bytes = stream.use {
+                    val bytes = if (length >= 0 && encoding != "gzip") stream.use { exact(it, length.toInt(), ::check) } else stream.use {
                         val out = ByteArrayOutputStream()
                         val buffer = ByteArray(8192)
                         while (true) {
                             check()
                             val count = it.read(buffer)
                             if (count < 0) break
-                            if (out.size() + count > TsvParser.MAX_BYTES) throw DictionaryProblem("SIZE_LIMIT")
+                            if (out.size() + count > limit) throw DictionaryProblem("SIZE_LIMIT")
                             out.write(buffer, 0, count)
                         }
                         out.toByteArray()
@@ -108,7 +111,24 @@ class Downloader(private val clock: () -> Long = System::nanoTime) {
         throw DictionaryProblem("REDIRECT_LIMIT")
     }
 
-    private class LimitedStream(input: InputStream, private val limit: Int, private val check: () -> Unit) : FilterInputStream(input) {
+    /**
+     * Reads a body of a declared [length] into one array of that size, instead of a growing buffer and its final copy
+     * (about three times the body at the peak). A longer or shorter body is caught by the INCOMPLETE_RESPONSE check.
+     */
+    private fun exact(input: InputStream, length: Int, check: () -> Unit): ByteArray {
+        val bytes = ByteArray(length)
+        var filled = 0
+        while (filled < length) {
+            check()
+            val count = input.read(bytes, filled, length - filled)
+            if (count < 0) return bytes.copyOf(filled)
+            filled += count
+        }
+        input.read() // A byte past the declared length is counted, so the response is rejected as incomplete.
+        return bytes
+    }
+
+    private class LimitedStream(input: InputStream, private val limit: Long, private val check: () -> Unit) : FilterInputStream(input) {
         var count = 0L
         private fun consumed(n: Int): Int { if (n > 0) count += n; if (count > limit) throw DictionaryProblem("SIZE_LIMIT"); check(); return n }
         override fun read(): Int { val value = `in`.read(); consumed(if (value < 0) 0 else 1); return value }

@@ -86,7 +86,6 @@ fun reasonText(context: Context, code: String): String = when (reasonOf(code)) {
     Reason.Name -> context.getString(R.string.reason_name)
     Reason.Locale -> context.getString(R.string.reason_locale)
     Reason.Empty -> context.getString(R.string.reason_empty)
-    Reason.SourceLimit -> context.getString(R.string.reason_source_limit)
     Reason.Generic -> context.getString(R.string.reason_generic)
 }
 

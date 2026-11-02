@@ -166,6 +166,18 @@ class SyncEngineTest {
         try { f.engine().apply(recovery.plan.id, recovery.plan.token) } catch (_: SyncStopped) { }
         assertEquals(0, f.store.fullKeyLoads)
     }
+    @Test fun managedKeysAreLimitedByTheMemoryBudgetIncludingTheOldNewUnion() = runBlocking {
+        val f = Fixture()
+        val engine = SyncEngine(f.store, f.gateway, "installation1", maxKeys = 1)
+        val p = engine.prepare("A", 1, null, "s0", "body0", listOf(a)); engine.apply(p.plan.id, p.plan.token)
+        // Replacing a with b briefly manages both, which this budget cannot hold; nothing is planned or written.
+        stopped("KEY_LIMIT") { engine.prepare("A", 1, p.plan.newSnapshot, "s1", "body1", listOf(b)) }
+        assertEquals(1, f.gateway.rows.size)
+        val roomy = SyncEngine(f.store, f.gateway, "installation1", maxKeys = 2)
+        val q = roomy.prepare("A", 1, p.plan.newSnapshot, "s1", "body1", listOf(b))
+        roomy.apply(q.plan.id, q.plan.token)
+        assertEquals(listOf(b.word), f.gateway.rows.values.map { it.word })
+    }
     @Test fun tupleIdentityAndProviderLocalePreserveExactUnicode() {
         assertNotEquals(a.id, b.id)
         assertNotEquals(SyncKey.of("ja", "ab", "c").id, SyncKey.of("ja", "a", "bc").id)

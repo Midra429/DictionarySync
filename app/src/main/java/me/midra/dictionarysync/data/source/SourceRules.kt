@@ -5,7 +5,6 @@ import java.util.Locale
 import me.midra.dictionarysync.data.parser.DictionaryProblem
 
 object SourceRules {
-    const val MAX_SOURCES = 20
     fun url(value: String): URI {
         val text = value.trim().substringBefore('#')
         val uri = try { URI(text) } catch (_: Exception) { throw DictionaryProblem("INVALID_URL") }

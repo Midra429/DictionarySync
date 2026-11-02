@@ -1,7 +1,9 @@
 package me.midra.dictionarysync.library
 
-import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
+import java.io.OutputStream
+import java.security.DigestOutputStream
+import java.security.MessageDigest
 import java.util.UUID
 import me.midra.dictionarysync.data.local.DictionaryDatabase
 import me.midra.dictionarysync.data.local.EntryEntity
@@ -12,7 +14,6 @@ import me.midra.dictionarysync.data.parser.ParsedDictionary
 import me.midra.dictionarysync.data.parser.ParsedEntry
 import me.midra.dictionarysync.data.parser.TsvParser
 import me.midra.dictionarysync.data.source.Download
-import me.midra.dictionarysync.data.source.Downloader
 import me.midra.dictionarysync.data.source.SourceRules
 
 /**
@@ -107,17 +108,29 @@ class SnapshotStore(private val db: DictionaryDatabase) {
 
         fun uniqueCount(entries: List<ParsedEntry>) = entries.map { Triple(it.locale, it.word, it.reading) }.toSet().size
 
-        /** Order-independent hash of the entries' content, used to tell a changed distribution from a re-download. */
+        /**
+         * Order-independent hash of the entries' content, used to tell a changed distribution from a re-download. Rows
+         * are ordered field by field, which is the order of their NUL-joined text since no field contains NUL (the
+         * parsers reject control characters), and streamed into the digest rather than serialized in memory first.
+         */
         fun contentHash(entries: List<ParsedEntry>): String {
-            val bytes = ByteArrayOutputStream()
-            DataOutputStream(bytes).use { out ->
-                // The sort key is built once per entry, not once per comparison.
-                entries.map { listOf(it.reading, it.word, it.partOfSpeech, it.comment, it.locale.orEmpty()) }
-                    .map { it to it.joinToString("\u0000") }.sortedBy { it.second }.forEach { (row) ->
-                        row.forEach { value -> val encoded = value.toByteArray(Charsets.UTF_8); out.writeInt(encoded.size); out.write(encoded) }
+            val digest = MessageDigest.getInstance("SHA-256")
+            DataOutputStream(DigestOutputStream(Discard, digest).buffered()).use { out ->
+                entries.sortedWith(FIELD_ORDER).forEach { entry ->
+                    for (value in listOf(entry.reading, entry.word, entry.partOfSpeech, entry.comment, entry.locale.orEmpty())) {
+                        val encoded = value.toByteArray(Charsets.UTF_8); out.writeInt(encoded.size); out.write(encoded)
                     }
+                }
             }
-            return Downloader.sha256(bytes.toByteArray())
+            return digest.digest().joinToString("") { "%02x".format(it) }
         }
+
+        /** OutputStream.nullOutputStream() needs API 33. */
+        private object Discard : OutputStream() {
+            override fun write(b: Int) = Unit
+            override fun write(b: ByteArray, off: Int, len: Int) = Unit
+        }
+
+        private val FIELD_ORDER = compareBy<ParsedEntry>({ it.reading }, { it.word }, { it.partOfSpeech }, { it.comment }, { it.locale.orEmpty() })
     }
 }

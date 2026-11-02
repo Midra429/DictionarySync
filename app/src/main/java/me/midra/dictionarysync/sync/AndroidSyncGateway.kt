@@ -8,6 +8,7 @@ import android.provider.UserDictionary.Words
 import android.util.AtomicFile
 import android.view.inputmethod.InputMethodManager
 import java.io.File
+import me.midra.dictionarysync.data.source.MemoryBudget
 import me.midra.dictionarysync.probe.*
 
 /** Current diagnostic certificate + unchanged manual witness. No privileged or shell Provider access. */
@@ -71,9 +72,10 @@ class AndroidSyncGateway(private val context: Context) : SyncGateway {
         val cursor = resolver.query(uri, AndroidDictionaryReader.COLUMNS, selection, args.toTypedArray(), null) ?: throw SyncStopped("NULL_CURSOR")
         return cursor.use { c ->
             val indices = AndroidDictionaryReader.COLUMNS.map { c.getColumnIndexOrThrow(it) }
+            val limit = MemoryBudget().maxKeys
             buildList {
                 while (c.moveToNext()) {
-                    if (size >= 100_000) throw SyncStopped("QUERY_LIMIT")
+                    if (size >= limit) throw SyncStopped("QUERY_LIMIT")
                     fun text(i: Int) = if (c.isNull(indices[i])) null else c.getString(indices[i])
                     fun number(i: Int) = if (c.isNull(indices[i])) null else c.getInt(indices[i])
                     val row = ProbeRow(c.getLong(indices[0]), text(1) ?: throw SyncStopped("MISSING_WORD"), text(2), text(3), number(4), number(5))

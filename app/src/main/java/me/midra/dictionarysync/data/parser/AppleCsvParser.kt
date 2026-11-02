@@ -9,11 +9,10 @@ import me.midra.dictionarysync.data.parser.TsvParser.validateValue
  * than three columns are skipped and reported; the automatic candidate check stays strict.
  */
 internal object AppleCsvParser {
-    fun parse(text: String, encoding: String, skipShort: Boolean = true): ParsedDictionary {
-        val lines = text.split(Regex("\r\n|\n|\r"))
+    fun parse(text: String, encoding: String, maxEntries: Long, skipShort: Boolean = true): ParsedDictionary {
         val entries = ArrayList<ParsedEntry>()
         val skipped = ArrayList<Int>()
-        lines.forEachIndexed { index, line ->
+        TsvParser.lines(text).forEachIndexed { index, line ->
             val number = index + 1
             if (line.toByteArray(Charsets.UTF_8).size > 64 * 1024) fail("RECORD_LIMIT", number)
             if (line.isBlank()) return@forEachIndexed
@@ -39,11 +38,11 @@ internal object AppleCsvParser {
             fields.forEachIndexed { column, field -> validateValue(field, when { column == 2 -> 256; column == memo && column >= 3 -> 4096; else -> 1024 }, number) }
             if (fields[1].isBlank()) fail("EMPTY_WORD", number)
             entries += ParsedEntry(number, fields[0], fields[1], fields[2], if (fields.size > 3) fields[memo] else "")
-            if (entries.size > TsvParser.MAX_ENTRIES) fail("ENTRY_LIMIT", number)
+            TsvParser.checkEntries(entries.size, maxEntries, number)
         }
         // Nothing but short lines means the wrong format, not a dictionary with a few slips.
         if (entries.isEmpty() && skipped.isNotEmpty()) fail("CSV_COLUMNS", skipped.first())
-        return ParsedDictionary(entries, lines.size - if (lines.last().isEmpty()) 1 else 0, PARSER, encoding, skipped)
+        return ParsedDictionary(entries, TsvParser.physicalLines(text), PARSER, encoding, skipped)
     }
 
     const val PARSER = "apple-csv-v1"

@@ -28,7 +28,6 @@
     <string name="sources_loading">読み込み中</string>
     <string name="sources_empty_title">辞書を追加しましょう</string>
     <string name="sources_empty_body">辞書ファイルのURLを登録すると、単語を定期的に取得してユーザー辞書に反映します。</string>
-    <string name="sources_limit_reached">辞書は最大20件まで登録できます</string>
     <string name="source_words">%1$s語</string>
     <string name="source_interval_every">%1$sごと</string>
     <string name="source_updated_never">未取得</string>
@@ -85,14 +84,13 @@
     <string name="reason_unsupported">対応していない辞書形式です（SKK・Rimeなど）</string>
     <string name="reason_format">形式に対応していないか、ファイルが壊れています</string>
     <string name="reason_encoding">文字コードを判別できません。詳細設定で指定してください</string>
-    <string name="reason_size">ファイルが大きすぎます（上限 20 MiB）</string>
+    <string name="reason_size">辞書が大きすぎて、この端末のメモリでは処理できません</string>
     <string name="reason_http">配布元がエラーを返しました（%1$s）</string>
     <string name="reason_url">https:// で始まる辞書ファイルのURLを入力してください</string>
     <string name="reason_duplicate">このURLはすでに登録されています</string>
     <string name="reason_name">名前を入力してください</string>
     <string name="reason_locale">言語タグが正しくありません（例: ja、ja-JP）</string>
     <string name="reason_empty">中身が空か、形式を判別できません</string>
-    <string name="reason_source_limit">辞書は最大20件まで登録できます</string>
     <string name="reason_generic">処理を完了できませんでした</string>
 
     <!-- お知らせ -->

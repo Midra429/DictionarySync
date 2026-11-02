@@ -9,6 +9,7 @@ import android.os.Looper
 import android.provider.UserDictionary.Words
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicInteger
+import me.midra.dictionarysync.data.source.MemoryBudget
 
 class AndroidProbeGateway(private val resolver: ContentResolver) : ProbeGateway, Closeable {
     private val notifications = AtomicInteger()
@@ -26,9 +27,11 @@ class AndroidProbeGateway(private val resolver: ContentResolver) : ProbeGateway,
             val indices = AndroidDictionaryReader.COLUMNS.map { column ->
                 it.getColumnIndex(column).also { i -> if (i < 0) throw MissingColumnException() }
             }
+            // The whole shared dictionary, including every word this app added, is read; only memory bounds it.
+            val limit = MemoryBudget().maxKeys
             buildList {
                 while (it.moveToNext()) {
-                    if (size >= 100_000) throw ProbeStopped("Diagnostic scan limit exceeded")
+                    if (size >= limit) throw ProbeStopped("Diagnostic scan limit exceeded")
                     fun string(i: Int) = if (it.isNull(i)) null else it.getString(i)
                     fun integer(i: Int) = if (it.isNull(i)) null else it.getInt(i)
                     add(ProbeRow(it.getLong(indices[0]), string(indices[1]) ?: throw MissingColumnException(),
