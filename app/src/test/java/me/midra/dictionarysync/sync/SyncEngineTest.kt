@@ -38,6 +38,9 @@ class MemorySyncStore : SyncStore {
     override suspend fun plans() = plans.values.toList()
     override suspend fun planKeys(id: String) = planKeys.filter { it.planId == id }
     override suspend fun operations(id: String) = ops.values.filter { it.planId == id }
+    override suspend fun insertedRows(rowIds: Collection<Long>) = rowIds.toSet().let { ids ->
+        ops.values.filter { it.kind == OperationKind.INSERT && it.returnedId in ids }.mapNotNull { it.returnedId }.toSet()
+    }
     override suspend fun prepare(plan: SyncPlan, keys: List<SyncKey>, planKeys: List<PlanKey>) {
         keys.forEach { this.keys[it.id] = it }; plans[plan.id] = plan; this.planKeys.addAll(planKeys); event()
     }
@@ -108,6 +111,8 @@ class FakeSyncGateway(val store: MemorySyncStore) : SyncGateway {
     val insertModes = mutableMapOf<Int, String>()
     var deleteMode = "NORMAL"
     var accessChecks = 0
+    val reserved = mutableSetOf<Long>()
+    override fun reserved(row: ProbeRow) = row.id in reserved
     var reads = 0
     override fun fingerprint() = fingerprint
     override fun checkAccess(): String { accessChecks++; if (!access) throw SyncStopped("READ_UNVERIFIED"); return fingerprint() }
@@ -174,14 +179,39 @@ class SyncEngineTest {
         val row = ProbeRow(5, "語'", "", null, null, 0)
         assertEquals(row, SyncCodec.row(SyncCodec.row(row)))
     }
-    @Test fun manualAndDuplicateExistingRowsAreBorrowedAndNeverDeleted() = runBlocking {
+    @Test fun manualAndDuplicateExistingRowsAreBorrowedAndKeptBySourceUpdates() = runBlocking {
         val f = Fixture()
         val original = listOf(a.value().row(1).copy(frequency = 220, shortcut = "よみ"), a.value().row(2))
         original.forEach { f.gateway.rows[it.id] = it }
         val p = f.plan(keys = listOf(a, a)); f.apply(p)
         assertEquals(Ownership.BORROWED, f.store.bindings.getValue(a.id).ownership)
-        val d = f.plan(keys = emptyList(), old = p.plan.newSnapshot, snapshot = null); f.apply(d)
-        assertEquals(original, f.gateway.rows.values.toList()); assertEquals(0, f.gateway.inserts); assertEquals(0, f.gateway.deletes)
+        val u = f.plan(keys = listOf(b), old = p.plan.newSnapshot); assertTrue(u.deletes.isEmpty()); f.apply(u)
+        assertEquals(original, f.gateway.rows.values.filter(a::matches)); assertEquals(1, f.gateway.inserts); assertEquals(0, f.gateway.deletes)
+        assertEquals(Ownership.RELEASED, f.store.bindings.getValue(a.id).ownership)
+    }
+    @Test fun removingSourceDeletesItsExistingMatchesIncludingDuplicates() = runBlocking {
+        val f = Fixture()
+        val other = SyncKey.of("ja", "人工語C", "よみ").value().row(3)
+        listOf(a.value().row(1).copy(frequency = 220), a.value().row(2), other).forEach { f.gateway.rows[it.id] = it }
+        val p = f.plan(keys = listOf(a, b)); f.apply(p)
+        val d = f.plan(keys = emptyList(), old = p.plan.newSnapshot, snapshot = null)
+        assertEquals(setOf(a, b), d.deletes.toSet()); assertEquals(0, d.protected)
+        f.apply(d)
+        assertEquals(listOf(other), f.gateway.rows.values.toList()); assertEquals(3, f.gateway.deletes); assertEquals(1, f.gateway.inserts)
+        assertEquals(Ownership.RELEASED, f.store.bindings.getValue(a.id).ownership)
+        assertEquals(PlanState.COMMITTED, f.store.plans.getValue(d.plan.id).state)
+    }
+    @Test fun removingSourceKeepsReservedAndSharedExistingRows() = runBlocking {
+        val f = Fixture()
+        val witness = a.value().row(1); val copy = a.value().row(2).copy(frequency = 220); val shared = b.value().row(3)
+        listOf(witness, copy, shared).forEach { f.gateway.rows[it.id] = it }
+        f.gateway.reserved += witness.id
+        val pa = f.plan("A", listOf(a, b)); f.apply(pa)
+        val pb = f.plan("B", listOf(b)); f.apply(pb)
+        f.apply(f.plan("A", emptyList(), pa.plan.newSnapshot, null))
+        assertEquals(listOf(witness, shared), f.gateway.rows.values.toList()); assertEquals(1, f.gateway.deletes)
+        assertEquals(Ownership.RELEASED, f.store.bindings.getValue(a.id).ownership)
+        assertEquals(Ownership.BORROWED, f.store.bindings.getValue(b.id).ownership)
     }
     @Test fun sameFileTenTimesAndMetadataDoNotIncreaseRows() = runBlocking {
         val f = Fixture(); var old: String? = null
@@ -308,7 +338,8 @@ class SyncEngineTest {
             try { f.apply(d) } catch (_: Crash) { }
             f.store.stopAt = Int.MAX_VALUE
             f.engine().apply(d.plan.id, d.plan.token)
-            assertEquals(listOf(manual), f.gateway.rows.values.toList()); assertTrue(f.store.refs.isEmpty()); assertEquals(1, f.gateway.deletes)
+            // The existing row goes with its source, as the app's own row does; neither delete is issued twice.
+            assertTrue("stop=$stop", f.gateway.rows.isEmpty()); assertTrue(f.store.refs.isEmpty()); assertEquals("stop=$stop", 2, f.gateway.deletes)
         }
     }
     @Test fun seededSourceSequencesConvergeToUnionWithoutChangingManualRows() = runBlocking {

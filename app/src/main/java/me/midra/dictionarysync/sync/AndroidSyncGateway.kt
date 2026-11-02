@@ -53,6 +53,7 @@ class AndroidSyncGateway(private val context: Context) : SyncGateway {
         if (byId(witness.id) != witness) throw SyncStopped("READ_WITNESS_LOST")
         return current
     }
+    override fun reserved(row: ProbeRow) = (diagnosis ?: readDiagnosis().also { diagnosis = it }).witness?.id == row.id
     private class Diagnosis(val certificate: String?, val unfinished: Boolean, val witness: ProbeRow?)
     private var diagnosis: Diagnosis? = null
     private fun readDiagnosis(): Diagnosis {

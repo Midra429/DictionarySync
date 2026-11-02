@@ -56,9 +56,10 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
         val removed = keys.filter { !it.desired }.map { allKeys.getValue(it.keyId) }
         val other = store.sharedKeys(plan.sourceId, removed.map { it.id })
         val bindings = store.bindings(keys.map { it.keyId }).associateBy { it.keyId }
-        val deletes = removed.filter { it.id !in other && bindings[it.id]?.ownership == Ownership.OWNED }
+        val deletable = deletable(plan)
+        val deletes = removed.filter { it.id !in other && bindings[it.id]?.ownership in deletable }
         return SyncPreview(plan, wanted.filter { needsInsert(bindings[it.id]) }, removed,
-            deletes, removed.count { bindings[it.id]?.ownership != Ownership.OWNED }, removed.count { it.id in other }, wanted.size)
+            deletes, removed.count { bindings[it.id]?.ownership !in deletable }, removed.count { it.id in other }, wanted.size)
     }
     suspend fun cancel(id: String) {
         val plan = store.plans().single { it.id == id }
@@ -112,17 +113,19 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
                 val reconciled = existing.map { it.keyId }.toSet()
                 val rest = chunk.filter { it.id !in reconciled }
                 val bindings = store.bindings(rest.map { it.id }).associateBy { it.keyId }
+                val deletable = deletable(plan)
+                val released = if (Ownership.BORROWED in deletable) setOf(Ownership.RELEASED) else setOf(Ownership.BORROWED, Ownership.RELEASED)
                 val targets = rest.filter { key ->
                     val binding = bindings[key.id] ?: throw SyncStopped("BINDING_MISSING")
-                    // Rows the app never inserted, or no longer holds, are released rather than deleted.
-                    !(binding.ownership in setOf(Ownership.BORROWED, Ownership.RELEASED) && binding.conflict == null)
+                    // Rows the app no longer holds, and existing matches a source update drops, are released rather than deleted.
+                    !(binding.ownership in released && binding.conflict == null)
                 }
                 audit(targets, plan)
                 for (key in targets) {
                     val binding = bindings.getValue(key.id)
-                    if (binding.ownership != Ownership.OWNED || binding.installationId != installationId) throw SyncStopped("OWNERSHIP_UNKNOWN")
+                    if (binding.ownership !in deletable || binding.installationId != installationId) throw SyncStopped("OWNERSHIP_UNKNOWN")
                 }
-                delete(targets.map { it to bindings.getValue(it.id) }, plan)
+                delete(current(targets.map { it to bindings.getValue(it.id) }, plan), plan)
             }
             boundary(plan)
             if (changes != unchanged) audit(wanted, plan)
@@ -264,8 +267,24 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
         throw SyncStopped("INSERT_UNKNOWN")
     }
     /**
-     * Deletes audited OWNED rows. Each call is journalled IN_FLIGHT beforehand; the results are journalled together,
-     * since an IN_FLIGHT delete is settled by reading its row back (absent: done; unchanged: not yet deleted).
+     * The rows to delete for audited [targets]. OWNED targets keep their recorded row. A BORROWED target stands for every
+     * row that matches its key now, read just before the delete so the exact-predicate delete removes each row as it
+     * is, duplicates included. Rows this app once inserted (now externally edited) and [SyncGateway.reserved] rows are
+     * kept; a borrowed key with nothing else left is only released.
+     */
+    internal suspend fun current(targets: List<Pair<SyncKey, ProviderBinding>>, plan: SyncPlan): List<Pair<SyncKey, ProviderBinding>> {
+        val found = find(targets.filter { it.second.ownership == Ownership.BORROWED }.map { it.first }, plan)
+        val inserted = store.insertedRows(found.values.flatten().map { it.id })
+        return targets.flatMap { (key, binding) ->
+            val rows = found[key.id] ?: return@flatMap listOf(key to binding)
+            if (rows.isEmpty()) conflict(key, binding, "BORROWED_LOST")
+            rows.filter { it.id !in inserted && !gateway.reserved(it) }.map { key to binding.copy(observed = SyncCodec.row(it)) }
+        }
+    }
+    /**
+     * Deletes audited OWNED rows, and the existing rows [current] pairs with BORROWED keys. Each call is journalled
+     * IN_FLIGHT beforehand; the results are journalled together, since an IN_FLIGHT delete is settled by reading its row
+     * back (absent: done; unchanged: not yet deleted).
      */
     internal suspend fun delete(targets: List<Pair<SyncKey, ProviderBinding>>, plan: SyncPlan) {
         if (targets.isEmpty()) return
@@ -379,6 +398,13 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
         private const val ABSENT = "ABSENT"
         /** An insert that found an existing match and borrowed it instead. */
         internal const val EXISTING_MATCH = "EXISTING_MATCH"
+        /**
+         * The ownerships whose rows [plan] deletes once no other source references them. Removing a source (disable or
+         * delete) also deletes its existing matches; a source update and an undo of a failed attempt delete only OWNED rows.
+         */
+        internal fun deletable(plan: SyncPlan): Set<Ownership> =
+            if (plan.newSnapshot == null && plan.purpose != PlanPurpose.COMPENSATE) setOf(Ownership.OWNED, Ownership.BORROWED)
+            else setOf(Ownership.OWNED)
         /** A key with no binding, or one the app no longer holds, is inserted (or borrowed) when wanted. */
         internal fun needsInsert(binding: ProviderBinding?) = binding == null || binding.ownership == Ownership.RELEASED
         /** Below SQLite's 999 bound-variable limit, so a batch is one IN query on older Android versions. */

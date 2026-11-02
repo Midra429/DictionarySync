@@ -36,7 +36,7 @@ abstract class SyncDao {
     @Query("DELETE FROM source_references WHERE sourceId=:id") abstract suspend fun clearReferences(id: String)
     @Query("UPDATE provider_bindings SET ownership=:to, observedAt=:now WHERE ownership=:from AND conflict IS NULL AND keyId NOT IN (SELECT keyId FROM source_references)")
     protected abstract suspend fun changeUnreferenced(from: Ownership, to: Ownership, now: Long)
-    /** Borrowed rows no source references any more are released; never deleted, since the app did not add them. */
+    /** Borrowed rows no source references any more are released. Only a source's removal plan deletes them. */
     suspend fun releaseUnreferenced(now: Long) = changeUnreferenced(Ownership.BORROWED, Ownership.RELEASED, now)
     @Query("SELECT * FROM sync_plans ORDER BY createdAt, id") abstract suspend fun plans(): List<SyncPlan>
     @Query("SELECT * FROM sync_plans WHERE state NOT IN (:closed) ORDER BY createdAt, id")
@@ -52,6 +52,9 @@ abstract class SyncDao {
     suspend fun deleteCommittedPlanKeys(sourceId: String) = deletePlanKeys(sourceId, PlanState.COMMITTED)
     @Query("SELECT * FROM operation_journal WHERE planId=:id ORDER BY id") abstract suspend fun operations(id: String): List<SyncOperation>
     @Query("SELECT COUNT(*) FROM operation_journal WHERE planId=:id AND kind=:kind") abstract suspend fun operationCount(id: String, kind: OperationKind): Int
+    @Query("SELECT DISTINCT returnedId FROM operation_journal WHERE kind=:kind AND returnedId IN (:rowIds)")
+    protected abstract suspend fun returned(kind: OperationKind, rowIds: List<Long>): List<Long>
+    suspend fun insertedRows(rowIds: List<Long>) = returned(OperationKind.INSERT, rowIds)
     @Insert(onConflict = OnConflictStrategy.REPLACE) abstract suspend fun operation(op: SyncOperation)
     @Insert(onConflict = OnConflictStrategy.REPLACE) abstract suspend fun operations(ops: List<SyncOperation>)
     @Query("SELECT id FROM sync_installation WHERE slot=1") abstract suspend fun installation(): String?
@@ -86,6 +89,7 @@ class RoomSyncStore(private val db: DictionaryDatabase, private val now: () -> L
     override suspend fun plans() = dao.plans()
     override suspend fun planKeys(id: String) = dao.planKeys(id)
     override suspend fun operations(id: String) = dao.operations(id)
+    override suspend fun insertedRows(rowIds: Collection<Long>) = rowIds.distinct().chunked(SyncEngine.BATCH).flatMap { dao.insertedRows(it) }.toSet()
     override suspend fun binding(binding: ProviderBinding) = dao.binding(binding)
     override suspend fun operation(op: SyncOperation) = dao.operation(op)
     override suspend fun verified(binding: ProviderBinding, op: SyncOperation) = db.withTransaction { dao.binding(binding); dao.operation(op) }

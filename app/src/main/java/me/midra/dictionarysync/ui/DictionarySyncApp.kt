@@ -163,7 +163,7 @@ private fun AddSourceRailButton(onClick: () -> Unit) {
 @Composable
 private fun DestinationItems(inSettings: Boolean, showSources: () -> Unit, showSettings: () -> Unit,
     item: @Composable (Boolean, () -> Unit, @Composable () -> Unit, @Composable () -> Unit) -> Unit) {
-    item(!inSettings, showSources, { Icon(painterResource(R.drawable.ic_format_list_bulleted_24), contentDescription = null) },
+    item(!inSettings, showSources, { Icon(painterResource(R.drawable.ic_dictionary_24), contentDescription = null) },
         { Text(stringResource(R.string.nav_sources)) })
     item(inSettings, showSources@{ showSettings() }, { Icon(painterResource(R.drawable.ic_settings_24), contentDescription = null) },
         { Text(stringResource(R.string.nav_settings)) })

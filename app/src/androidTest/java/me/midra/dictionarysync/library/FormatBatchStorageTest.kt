@@ -77,7 +77,7 @@ class FormatBatchStorageTest {
             assertEquals(references, db.sync().references()); assertEquals(oldRows, gateway.rows)
             assertEquals(3, db.sync().plans().size) // Fetching never prepares or approves a Plan.
             val p = prepare(db, engine, b)
-            assertTrue(p.ownedDeletes.isEmpty()) // XML still needs the shared key.
+            assertTrue(p.deletes.isEmpty()) // XML still needs the shared key.
             engine.apply(p.plan.id, p.plan.token)
             assertEquals(0, gateway.deletes)
             assertTrue(gateway.rows.values.any { it.word == "共有語" })
@@ -173,7 +173,7 @@ class FormatBatchStorageTest {
             body = "<plist version='1.0'><array/></plist>"; library.fetchAll()
             assertEquals(FetchState.FETCHED, db.library().source(id)!!.state)
             val empty = prepare(db, engine, id)
-            assertEquals(1, empty.ownedDeletes.size)
+            assertEquals(1, empty.deletes.size)
             try { engine.apply(empty.plan.id, "wrong-candidate"); fail() } catch (e: SyncStopped) { assertEquals("APPROVAL_REQUIRED", e.code) }
             assertEquals(0, gateway.deletes); assertEquals(first.id, db.library().source(id)!!.activeSnapshot)
             assertEquals(1, db.sync().references().size); assertFalse(db.sync().plans().single { it.id == empty.plan.id }.approved)
