@@ -6,26 +6,50 @@
 
 ```mermaid
 flowchart LR
-  UI[Compose / ViewModel] --> REPO[ソース管理 Repository]
-  WM[WorkManager] --> REPO
-  REPO --> DL[取得・解析]
-  REPO --> DB[(Room)]
-  REPO --> SYNC[共有辞書への差分反映]
-  SYNC --> DB
-  SYNC --> PR[(UserDictionary)]
+  UI[AppViewModel<br/>画面ごとの状態ホルダー] --> ED[SourceEditor<br/>追加・編集]
+  UI --> SS[SourceSync<br/>有効／無効・削除]
+  UI --> SCH[FetchScheduler]
+  WM[Worker] --> FE[SourceFetcher<br/>取得]
+  WM --> AQ[ApplyQueue<br/>反映待ちの処理]
+  SCH --> WM
+  ED --> DL[取得・解析]
+  FE --> DL
+  ED --> SN[SnapshotStore]
+  FE --> SN
+  AQ --> SS
+  SS --> ENG[SyncEngine]
+  SN --> DB[(Room)]
+  ENG --> DB
+  ENG --> PR[(UserDictionary)]
 ```
 
-単一appモジュールを維持する。既存のKotlin・Coroutines・Flow、Compose・Material 3 Expressive、Room、DataStore、Paging、WorkManagerを使い、追加のDI基盤や汎用ジョブエンジンを導入しない。
+単一appモジュールを維持する。既存のKotlin・Coroutines・Flow、Compose・Material 3 Expressive、Room、DataStore、Paging、WorkManagerを使い、追加のDI基盤や汎用ジョブエンジンを導入しない。部品の組み立ては `AppContainer`（手書きの依存関係グラフ、プロセスに1つ）で行い、Worker・ViewModelはそこから部品を受け取る。試験は同じコンストラクタにメモリ上のDB・偽の取得・偽Providerを渡して組み立てる。
 
-| 層 | 責務 |
+| 部品 | 責務 |
 |---|---|
-| UI / ViewModel | 2タブ（Navigation 3のバックスタック、幅に応じてlist-detail）、フォーム入力、単語検索、選択sourceId集合、進捗とエラー表示。状態の表示規則は `ui/sources/SourcePresentation.kt` の純粋関数 |
-| Repository | 初回取得成功後の追加、編集、ソースの有効／無効、個別処理の一括呼出し |
+| `AppViewModel` と状態ホルダー | 画面ごとの状態（`SourceListState`・`EntriesState`・`SourceFormState`・`SettingsState`・`SyncReviewState`）を1つのViewModelに持つ。ユーザー操作は共有の `Operations` で1つずつ実行し、実行中は他の操作を無効にする。状態の表示規則は `ui/sources/SourcePresentation.kt` の純粋関数 |
+| `SourceEditor` | 追加・編集。入力（`SourceDraft`）を検証し、取得に関わる設定なら取得・解析してからSourceと取得版を1回のトランザクションで保存する |
+| `SourceFetcher` | 登録済みソースの取得要求の実行、条件付き取得と304、失敗時の待機・再試行の記録 |
+| `SnapshotStore` | 取得版（Snapshot）と単語の保存、不要な版の削除、304で再利用できる版の検証 |
+| `SourceSync` | ソースの希望状態（有効・無効・削除）と、それを共有辞書に反映する計画の作成・実行・復旧 |
+| `ApplyQueue` | 反映待ちのソースを `SourceSync` で1件ずつ反映する（反映チェーンの本体） |
+| `FetchScheduler` / `FetchWork` | 保存済みの要求をWorkManagerの作業として登録し、保存と登録の間の欠落を起動時に補う |
+| `SyncEngine` / `SyncRecoveryEngine` | 有効ソースの参照を照合し、アプリ管理行だけを差分反映。操作記録による再開・復旧 |
 | Downloader / Parser | HTTPS取得、対応形式の解析。DB・Provider・UIから独立 |
 | Room | ソース設定、取得済み単語、最終更新時刻、同期用の参照・操作記録 |
 | DataStore | Wi-Fiのみ設定。ソースの間隔や言語はRoomに保存 |
-| WorkManager | 有効ソースの定期同期、通信失敗の再試行。時刻の厳密な保証はしない |
-| 同期処理 | 有効ソースの参照を照合し、アプリ管理行だけを差分反映 |
+
+### 状態の型
+
+ソース・計画・操作記録・取得要求の状態はKotlinのenum（`SourceLifecycle`・`FetchState`・`SyncState`・`PlanState`・`PlanPurpose`・`Ownership`・`OperationKind`・`OperationPhase`・`FetchOutcome`・`WaitReason`）で扱う。Roomは名前で保存するため、定数名はschemaの一部であり、変更せず追加だけを行う。理由コード（`SyncStopped`・`DictionaryProblem` の `code`）は利用者への説明と問い合わせ用の文字列のまま扱う。
+
+### 変更してはいけない名前
+
+インストール済みの端末が保持している名前は、変更すると既存の登録が失われる。
+
+- Worker のクラス名（`sync.FetchWorker`・`ApplyWorker`・`FetchWakeWorker`・`PeriodicFetchWorker`）と一意な作業名（`FetchWork` の定数）。WorkManagerがDBに保存している
+- IMEサービス `ime.DictionaryProbeIme`。利用者がOSの設定で有効にしたキーボードとして記録されている
+- `DictionaryDatabase` のクラス名（schemaの出力先）、DataStoreとファイル（`noBackupFilesDir` 内）の名前
 
 ## 追加・編集・一括処理
 
@@ -38,7 +62,7 @@ flowchart LR
 - 標準のHTTPSクライアントとTLS検証を使用する。URLクエリを組み替えず、リダイレクト先で元の保存URLを上書きしない。
 - 既存のタイムアウト（接続15秒・読込30秒・全体120秒）、最大5リダイレクト、転送・展開後20 MiB上限を継続する（100,000語の辞書はUTF-16やAppleの字下げ付きplistで10 MiBを超えるため）。上限は資源保護であり、新たな細目検証を増やす根拠にしない。
 - 対応形式を全体解析してから採用する。取得・復号・解析失敗なら旧データを保持する。正常な0件と通信失敗の空本文は区別する。
-- HTTP validator（ETag・Last-Modified）による条件付き取得と304、上限付きの再試行とRetry-Afterに対応する（`data/source/HttpRetry.kt`）。
+- HTTP validator（ETag・Last-Modified）による条件付き取得と304、上限付きの再試行とRetry-Afterに対応する（`data/source/HttpRetry.kt`）。取得は `DictionaryDownload` を通して行い、試験ではこれを差し替える。
 - Wi-Fiのみ設定を初回取得・手動同期・定期同期へ同じように適用する。設定待ちを初回追加の成功としない。
 
 ## 性能と保存

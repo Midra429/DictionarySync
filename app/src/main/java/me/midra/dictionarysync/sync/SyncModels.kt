@@ -5,6 +5,8 @@ import java.io.*
 import java.security.MessageDigest
 import java.util.Base64
 import java.util.Locale
+import me.midra.dictionarysync.data.local.SourceLifecycle
+import me.midra.dictionarysync.data.source.SourceRules
 import me.midra.dictionarysync.probe.ProbeRow
 import me.midra.dictionarysync.probe.ProbeValue
 
@@ -46,7 +48,7 @@ data class SyncKey(@PrimaryKey val id: String, val locale: String, val word: Str
         // A dictionary has a handful of distinct language tags; resolving each once keeps 100,000 keys cheap.
         private val languages = java.util.concurrent.ConcurrentHashMap<String, String>()
         fun of(locale: String, word: String, shortcut: String?): SyncKey {
-            val language = languages[locale] ?: me.midra.dictionarysync.data.source.SourceRules.resolvedLocale(locale).also { languages[locale] = it }
+            val language = languages[locale] ?: SourceRules.resolvedLocale(locale).also { languages[locale] = it }
             val values = listOf(language, word, shortcut?.ifEmpty { null })
             val packed = SyncCodec.pack(values)
             return SyncKey(packed, language, word, values[2], SyncCodec.digest(packed))
@@ -58,29 +60,63 @@ data class SyncKey(@PrimaryKey val id: String, val locale: String, val word: Str
     }
 }
 
+/** The app's relation to the Provider row of one key. [observed] is the row as last read back; [conflict] stops further use. */
 @Entity(tableName = "provider_bindings")
-data class ProviderBinding(@PrimaryKey val keyId: String, val installationId: String, val authority: String = "user_dictionary",
-    val ownership: String, val observed: String?, val observedAt: Long, val conflict: String? = null)
+data class ProviderBinding(
+    @PrimaryKey val keyId: String,
+    val installationId: String,
+    val authority: String = "user_dictionary",
+    val ownership: Ownership,
+    val observed: String?,
+    val observedAt: Long,
+    val conflict: String? = null,
+)
 
 @Entity(tableName = "source_references", primaryKeys = ["sourceId", "keyId"], indices = [Index("keyId")])
 data class SourceReference(val sourceId: String, val snapshotId: String, val keyId: String)
 
+/**
+ * One durable change of a source's shared-dictionary words, from [oldSnapshot] to [newSnapshot] (null: remove them).
+ * A recovery plan has a [parentId] and a pinned [recoveryContext]. With [retainSource] a removal keeps the source (disable).
+ */
 @Entity(tableName = "sync_plans", indices = [Index("sourceId")])
-data class SyncPlan(@PrimaryKey val id: String, val sourceId: String, val revision: Long, val oldSnapshot: String?,
-    val newSnapshot: String?, val installationId: String, val fingerprint: String, val token: String,
-    val approved: Boolean = false, val state: String = "PREPARED", val error: String? = null,
-    val createdAt: Long, val finishedAt: Long? = null,
-    val purpose: String = "APPLY",
-    val parentId: String? = null, val recoveryContext: String? = null,
-    val retainSource: Boolean = false)
+data class SyncPlan(
+    @PrimaryKey val id: String,
+    val sourceId: String,
+    val revision: Long,
+    val oldSnapshot: String?,
+    val newSnapshot: String?,
+    val installationId: String,
+    val fingerprint: String,
+    val token: String,
+    val approved: Boolean = false,
+    val state: PlanState = PlanState.PREPARED,
+    val error: String? = null,
+    val createdAt: Long,
+    val finishedAt: Long? = null,
+    val purpose: PlanPurpose = PlanPurpose.APPLY,
+    val parentId: String? = null,
+    val recoveryContext: String? = null,
+    val retainSource: Boolean = false,
+)
 
 @Entity(tableName = "plan_keys", primaryKeys = ["planId", "keyId"])
 data class PlanKey(val planId: String, val keyId: String, val desired: Boolean)
 
+/** One journalled Provider call. [expected] is the insert intent or the row to delete; [result] a delete's count. */
 @Entity(tableName = "operation_journal", indices = [Index("planId")])
-data class SyncOperation(@PrimaryKey val id: String, val planId: String, val keyId: String, val kind: String,
-    val phase: String = "PREPARED", val expected: String? = null, val returnedId: Long? = null, val result: Int? = null,
-    val attempts: Int = 0, val error: String? = null)
+data class SyncOperation(
+    @PrimaryKey val id: String,
+    val planId: String,
+    val keyId: String,
+    val kind: OperationKind,
+    val phase: OperationPhase = OperationPhase.PREPARED,
+    val expected: String? = null,
+    val returnedId: Long? = null,
+    val result: Int? = null,
+    val attempts: Int = 0,
+    val error: String? = null,
+)
 
 /** Incremented by SQLite triggers on every change to source_references, whoever writes it. */
 @Entity(tableName = "reference_generation")
@@ -128,7 +164,8 @@ interface SyncStore {
     suspend fun finishRecovery(plan: SyncPlan)
 }
 
-data class SyncSourceState(val id: String, val revision: Long, val activeSnapshot: String?, val lifecycle: String)
+/** What a recovery pins of each source it involves. */
+data class SyncSourceState(val id: String, val revision: Long, val activeSnapshot: String?, val lifecycle: SourceLifecycle)
 
 interface SyncGateway {
     fun fingerprint(): String
@@ -144,7 +181,13 @@ interface SyncGateway {
     fun insert(value: ProbeValue): Long?
     fun delete(row: ProbeRow): Int
 }
-class SyncStopped(val code: String) : IllegalStateException(code)
+/** A sync stopped for a reason the user can act on; [code] is shown as detail and grouped by the UI. */
+class SyncStopped(val code: String) : IllegalStateException(code) {
+    companion object {
+        /** The code of a sync failure; other errors are identified by their class. */
+        fun code(error: Throwable) = (error as? SyncStopped)?.code ?: error.javaClass.simpleName
+    }
+}
 
 enum class SyncReadiness { READY, IME_DISABLED, DIAGNOSIS_REQUIRED, PROBE_UNFINISHED, UNSUPPORTED }
 

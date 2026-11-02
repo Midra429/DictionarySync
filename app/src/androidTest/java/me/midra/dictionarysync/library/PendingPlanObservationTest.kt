@@ -15,6 +15,8 @@ import me.midra.dictionarysync.sync.*
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
+import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.ui.AppViewModel
 
 /** A single failed preview must not stop the unfinished-plan banner from updating afterwards. */
 @RunWith(AndroidJUnit4::class)
@@ -31,21 +33,21 @@ class PendingPlanObservationTest {
         val db = Room.inMemoryDatabaseBuilder(context, DictionaryDatabase::class.java).build()
         try {
             var failures = 1
-            val sync = SyncRepository(context, db) {
+            val sync = SourceSync(context, db) {
                 if (failures-- > 0) throw IllegalStateException("synthetic preview failure")
                 SyncEngine(RoomSyncStore(db), RequirementsStorageTest.Gateway(), "pending-observation")
             }
-            val model = LibraryViewModel(context.applicationContext as Application, SavedStateHandle(), LibraryRepository(context, db), sync, NoDispatch)
-            val collector = launch(Dispatchers.Default) { model.pending.collect {} }
+            val model = AppViewModel(context.applicationContext as Application, SavedStateHandle(), testApp(context, db, sync = sync, dispatch = NoDispatch))
+            val collector = launch(Dispatchers.Default) { model.review.pending.collect {} }
             db.library().addSource(SourceEntity("A", "合成", "https://example.org/a"))
             val plan = SyncPlan("P", "A", 1, null, null, "pending-observation", "fp", "token", createdAt = 1)
             db.sync().plan(plan)
-            withTimeout(8_000) { while (model.error.value == null) delay(20) }
-            assertEquals("IllegalStateException", model.error.value)
+            withTimeout(8_000) { while (model.operations.error.value == null) delay(20) }
+            assertEquals("IllegalStateException", model.operations.error.value)
             // The insert may already have triggered a second, successful evaluation; either way a later change must be seen.
             db.sync().plan(plan.copy(createdAt = 2)) // any later change re-evaluates the plan
-            withTimeout(10_000) { while (model.pending.value == null) delay(20) }
-            assertEquals("P", model.pending.value!!.plan.id)
+            withTimeout(10_000) { while (model.review.pending.value == null) delay(20) }
+            assertEquals("P", model.review.pending.value!!.plan.id)
             collector.cancel()
         } finally { db.close() }
     }

@@ -26,7 +26,6 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import me.midra.dictionarysync.R
 import me.midra.dictionarysync.data.source.SourceRules
-import me.midra.dictionarysync.library.LibraryViewModel
 import me.midra.dictionarysync.ui.common.AppIcons
 import me.midra.dictionarysync.ui.common.ErrorDialog
 import me.midra.dictionarysync.ui.editor.SourceEditorDialog
@@ -52,7 +51,7 @@ import me.midra.dictionarysync.ui.sources.SourceListScreen
  */
 @OptIn(ExperimentalMaterial3AdaptiveApi::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun DictionarySyncApp(library: LibraryViewModel, setup: Boolean = false, diagnostics: @Composable (onBack: () -> Unit) -> Unit) {
+fun DictionarySyncApp(model: AppViewModel, setup: Boolean = false, diagnostics: @Composable (onBack: () -> Unit) -> Unit) {
     val backStack = rememberNavBackStack(if (setup) SetupRoute else SourcesRoute)
     val inSetup = backStack.first() == SetupRoute
     val inSettings = !inSetup && backStack.any { it == SettingsRoute || it == DiagnosticsRoute }
@@ -63,21 +62,21 @@ fun DictionarySyncApp(library: LibraryViewModel, setup: Boolean = false, diagnos
         if (!inSetup) showSettings()
         if (backStack.last() != DiagnosticsRoute) backStack.add(DiagnosticsRoute)
     }
-    fun finishSetup() { library.finishSetup(); showSources(); backStack[0] = SourcesRoute }
+    fun finishSetup() { model.settings.finishSetup(); showSources(); backStack[0] = SourcesRoute }
     // Shared by the list's FAB and the rail's, so the limit message shows on the source list either way.
-    val sources by library.sources.collectAsStateWithLifecycle()
+    val sources by model.sources.sources.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val limitMessage = stringResource(R.string.sources_limit_reached)
     fun addSource() {
         if (inSettings) showSources()
-        if (sources.size >= SourceRules.MAX_SOURCES) scope.launch { snackbar.showSnackbar(limitMessage) } else library.edit(null)
+        if (sources.size >= SourceRules.MAX_SOURCES) scope.launch { snackbar.showSnackbar(limitMessage) } else model.form.edit(null)
     }
     // Both can change in system settings while the app is in the background.
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { library.refreshReadiness(); library.refreshBatteryOptimization(); library.refreshNotifications() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { model.settings.refreshAll() }
     // Diagnostics runs inside this activity, so finishing it and going back does not resume anything.
     val top = backStack.last()
-    LaunchedEffect(top) { if (top != DiagnosticsRoute) library.refreshReadiness() }
+    LaunchedEffect(top) { if (top != DiagnosticsRoute) model.settings.refreshReadiness() }
 
     val transitions = rememberNavTransitions()
     val paneExpansion = rememberPaneExpansionState(anchors = PaneAnchors, initialAnchoredIndex = 1)
@@ -114,7 +113,7 @@ fun DictionarySyncApp(library: LibraryViewModel, setup: Boolean = false, diagnos
                     predictivePopTransitionSpec = { edge -> transitions.predictiveBack(edge) },
                     entryProvider = entryProvider {
                         entry<SourcesRoute>(metadata = ListDetailSceneStrategy.listPane(detailPlaceholder = { EntriesPlaceholder() })) {
-                            SourceListScreen(library, opened, snackbar, onAdd = ::addSource, showFab = !wide,
+                            SourceListScreen(model, opened, snackbar, onAdd = ::addSource, showFab = !wide,
                                 onOpenSource = { id ->
                                     if (backStack.last() is EntriesRoute) backStack.removeAt(backStack.lastIndex)
                                     backStack.add(EntriesRoute(id))
@@ -122,13 +121,13 @@ fun DictionarySyncApp(library: LibraryViewModel, setup: Boolean = false, diagnos
                                 onOpenDiagnostics = ::openDiagnostics)
                         }
                         entry<EntriesRoute>(metadata = ListDetailSceneStrategy.detailPane() + transitions.hierarchical()) { route ->
-                            EntriesScreen(library, route.sourceId, onBack = {
+                            EntriesScreen(model, route.sourceId, onBack = {
                                 if (backStack.lastOrNull() == route) backStack.removeAt(backStack.lastIndex)
                             })
                         }
-                        entry<SettingsRoute> { SettingsScreen(library, onOpenDiagnostics = ::openDiagnostics) }
+                        entry<SettingsRoute> { SettingsScreen(model.settings, model.operations, onOpenDiagnostics = ::openDiagnostics) }
                         entry<DiagnosticsRoute>(metadata = transitions.hierarchical()) { diagnostics(::pop) }
-                        entry<SetupRoute> { SetupScreen(library, onOpenDiagnostics = ::openDiagnostics, onFinish = ::finishSetup) }
+                        entry<SetupRoute> { SetupScreen(model.settings, onOpenDiagnostics = ::openDiagnostics, onFinish = ::finishSetup) }
                     },
                 )
                 if (showBar) ShortNavigationBar {
@@ -139,7 +138,7 @@ fun DictionarySyncApp(library: LibraryViewModel, setup: Boolean = false, diagnos
             }
         }
     }
-    LibraryOverlays(library)
+    Overlays(model)
 }
 
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
@@ -172,20 +171,19 @@ private fun DestinationItems(inSettings: Boolean, showSources: () -> Unit, showS
 
 /** Dialog-level flows driven by ViewModel state, so they survive recreation and finish even if the caller is gone. */
 @Composable
-fun LibraryOverlays(library: LibraryViewModel) {
-    val sources by library.sources.collectAsStateWithLifecycle()
-    val form by library.formOpen.collectAsStateWithLifecycle()
-    val editingId by library.editingId.collectAsStateWithLifecycle()
-    val retryAt by library.formRetryAt.collectAsStateWithLifecycle()
-    val busy by library.busy.collectAsStateWithLifecycle()
-    val saving by library.saving.collectAsStateWithLifecycle()
-    val error by library.error.collectAsStateWithLifecycle()
-    val preview by library.preview.collectAsStateWithLifecycle()
-    preview?.let { SyncReviewDialog(it, busy, sources, library::dismissPreview, library::cancelPlan, library::applySync, library::prepareRecovery) }
-    if (form) SourceEditorDialog(sources.find { it.id == editingId }, busy, saving, retryAt, error, library::dismissError,
-        library::cancelSave, library::dismissForm) { name, url, locale, format, encoding, interval ->
-        library.save(editingId, name, url, locale, format, encoding, interval)
-    }
+private fun Overlays(model: AppViewModel) {
+    val sources by model.sources.sources.collectAsStateWithLifecycle()
+    val formOpen by model.form.open.collectAsStateWithLifecycle()
+    val editingId by model.form.editingId.collectAsStateWithLifecycle()
+    val retryAt by model.form.retryAt.collectAsStateWithLifecycle()
+    val saving by model.form.saving.collectAsStateWithLifecycle()
+    val busy by model.operations.busy.collectAsStateWithLifecycle()
+    val error by model.operations.error.collectAsStateWithLifecycle()
+    val preview by model.review.preview.collectAsStateWithLifecycle()
+    val review = model.review
+    preview?.let { SyncReviewDialog(it, busy, sources, review::dismiss, review::cancel, review::apply, review::prepareRecovery) }
+    if (formOpen) SourceEditorDialog(sources.find { it.id == editingId }, busy, saving, retryAt, error, model.operations::dismissError,
+        model.form::cancel, model.form::dismiss, model.form::save)
     // Form errors are shown inline in the form; everything else as a dialog.
-    if (!form) error?.let { ErrorDialog(it, library::dismissError) }
+    if (!formOpen) error?.let { ErrorDialog(it, model.operations::dismissError) }
 }

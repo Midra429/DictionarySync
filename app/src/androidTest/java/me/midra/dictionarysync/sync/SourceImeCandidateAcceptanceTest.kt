@@ -8,7 +8,7 @@ import kotlinx.coroutines.runBlocking
 import me.midra.dictionarysync.data.local.DictionaryDatabase
 import me.midra.dictionarysync.data.source.Download
 import me.midra.dictionarysync.data.source.Downloader
-import me.midra.dictionarysync.library.LibraryRepository
+import me.midra.dictionarysync.AppContainer
 import me.midra.dictionarysync.library.RequirementsStorageTest
 import me.midra.dictionarysync.probe.AndroidProbeGateway
 import me.midra.dictionarysync.probe.WriteProbe
@@ -17,6 +17,10 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import me.midra.dictionarysync.data.local.SourceLifecycle
+import me.midra.dictionarysync.data.local.SyncState
+import me.midra.dictionarysync.save
+import me.midra.dictionarysync.testApp
 
 /** One retained artificial word for a separately authorized human IME check. Never reset the ledger. */
 @RunWith(AndroidJUnit4::class)
@@ -78,17 +82,17 @@ class SourceImeCandidateAcceptanceTest {
 
     private suspend fun stage(db: DictionaryDatabase, gateway: SyncGateway) {
         val sync = sync(db, gateway)
-        val repo = LibraryRepository(context, db, synchronizeSource = { sync.synchronize(it) }) { url, _, _ ->
+        val repo = testApp(context, db, sync = sync) { url, _, _ ->
             val bytes = "${key.shortcut}\t${key.word}\t名詞".toByteArray()
             Download(bytes, Downloader.sha256(bytes), url, "text/plain; charset=utf-8")
         }
-        val id = repo.save(null, "IME候補確認用（人工語1件）", sourceUrl, "AUTO", "AUTO", "AUTO")
-        FetchRunner(repo).runOne()
-        assertEquals("SYNCED", repo.dao.source(id)!!.syncState)
+        val id = repo.editor.save(null, "IME候補確認用（人工語1件）", sourceUrl, "AUTO", "AUTO", "AUTO")
+        repo.fetchRunner.runOne()
+        assertEquals(SyncState.SYNCED, repo.database.library().source(id)!!.syncState)
         assertEquals(1, gateway.find(key).size)
         assertEquals(1, db.sync().references().size)
-        assertEquals("OWNED", db.sync().bindings().single().ownership)
-        assertTrue(db.sync().plans().all { it.state == "COMMITTED" })
+        assertEquals(Ownership.OWNED, db.sync().bindings().single().ownership)
+        assertTrue(db.sync().plans().all { it.state == PlanState.COMMITTED })
     }
 
     private suspend fun cleanup(db: DictionaryDatabase, gateway: SyncGateway) {
@@ -99,11 +103,11 @@ class SourceImeCandidateAcceptanceTest {
         assertTrue(sync(db, gateway).delete(source.id))
         assertTrue(gateway.find(key).isEmpty())
         assertTrue(db.sync().references().isEmpty())
-        assertEquals("DELETED", db.library().source(source.id)!!.lifecycle)
-        assertTrue(db.sync().plans().all { it.state == "COMMITTED" })
+        assertEquals(SourceLifecycle.DELETED, db.library().source(source.id)!!.lifecycle)
+        assertTrue(db.sync().plans().all { it.state == PlanState.COMMITTED })
     }
 
-    private fun sync(db: DictionaryDatabase, gateway: SyncGateway) = SyncRepository(context, db) {
+    private fun sync(db: DictionaryDatabase, gateway: SyncGateway) = SourceSync(context, db) {
         SyncEngine(RoomSyncStore(db), gateway, SyncCoordinator.installation(context))
     }
     private fun openLedger() = Room.databaseBuilder(context, DictionaryDatabase::class.java, ledger.absolutePath).build()

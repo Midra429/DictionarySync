@@ -4,24 +4,60 @@ import android.content.Context
 import androidx.paging.PagingSource
 import androidx.room.*
 import java.io.File
-import me.midra.dictionarysync.sync.*
+import me.midra.dictionarysync.sync.PendingRequest
+import me.midra.dictionarysync.sync.PendingRequestDao
+import me.midra.dictionarysync.sync.PlanKey
+import me.midra.dictionarysync.sync.ProviderBinding
+import me.midra.dictionarysync.sync.ReferenceGeneration
+import me.midra.dictionarysync.sync.SourceReference
+import me.midra.dictionarysync.sync.SyncDao
+import me.midra.dictionarysync.sync.SyncInstallation
+import me.midra.dictionarysync.sync.SyncKey
+import me.midra.dictionarysync.sync.SyncOperation
+import me.midra.dictionarysync.sync.SyncPlan
 import kotlinx.coroutines.flow.Flow
 
-// Active URL uniqueness is checked under SyncCoordinator; deleted history must not reserve a URL.
+/**
+ * A registered dictionary file and its settings. [revision] changes with any setting that affects fetching, so a
+ * generation fetched with old settings never mixes into new ones. [latestSnapshot] is the newest valid generation,
+ * [activeSnapshot] the one in the shared dictionary. Active URL uniqueness is checked under the sync lock, since a
+ * deleted source keeps its row and must not reserve its URL.
+ */
 @Entity(tableName = "sources", indices = [Index(value = ["url"])])
 data class SourceEntity(
     @PrimaryKey val id: String,
-    val name: String, val url: String, val locale: String = "AUTO", val format: String = "AUTO", val encoding: String = "AUTO",
-    val revision: Long = 1, val latestSnapshot: String? = null, val previousSnapshot: String? = null,
-    val activeSnapshot: String? = null, val state: String = "NOT_FETCHED", val error: String? = null,
-    val fetchedAt: Long? = null, val syncedAt: Long? = null, val changedAt: Long? = null,
-    val lifecycle: String = "ACTIVE",
-    val syncState: String = "NOT_SYNCED",
+    val name: String,
+    val url: String,
+    val locale: String = "AUTO",
+    val format: String = "AUTO",
+    val encoding: String = "AUTO",
+    val revision: Long = 1,
+    val latestSnapshot: String? = null,
+    val previousSnapshot: String? = null,
+    val activeSnapshot: String? = null,
+    /** The last fetch; [error] is its reason. */
+    val state: FetchState = FetchState.NOT_FETCHED,
+    val error: String? = null,
+    /** Last successful fetch, including a validated 304. */
+    val fetchedAt: Long? = null,
+    val syncedAt: Long? = null,
+    /** Last fetch whose content differed from the previous generation. */
+    val changedAt: Long? = null,
+    val lifecycle: SourceLifecycle = SourceLifecycle.ACTIVE,
+    /** The shared dictionary; [syncError] is its reason. */
+    val syncState: SyncState = SyncState.NOT_SYNCED,
+    /** Retry-After from the server, which every fetch of this source respects. */
     val serverNotBefore: Long = 0,
     val enabled: Boolean = true,
     val syncIntervalHours: Int = 24,
     val syncError: String? = null,
-)
+) {
+    val listed get() = lifecycle == SourceLifecycle.ACTIVE
+    /** Fetched and kept in the shared dictionary. */
+    val syncable get() = listed && enabled
+    /** Whether the fetch interval has passed since the last successful fetch. */
+    fun fetchDue(now: Long) = fetchedAt == null || now - fetchedAt >= syncIntervalHours * 3_600_000L
+}
 
 @Entity(tableName = "snapshots", indices = [Index("sourceId")], foreignKeys = [ForeignKey(entity = SourceEntity::class, parentColumns = ["id"], childColumns = ["sourceId"])])
 data class SnapshotEntity(

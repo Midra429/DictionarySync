@@ -29,8 +29,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import me.midra.dictionarysync.R
 import me.midra.dictionarysync.data.local.SourceEntity
-import me.midra.dictionarysync.library.BatchResult
-import me.midra.dictionarysync.library.LibraryViewModel
+import me.midra.dictionarysync.ui.AppViewModel
 import me.midra.dictionarysync.sync.SyncReadiness
 import me.midra.dictionarysync.ui.common.*
 
@@ -40,17 +39,18 @@ import me.midra.dictionarysync.ui.common.*
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class, ExperimentalMaterial3Api::class)
 @Composable
-fun SourceListScreen(model: LibraryViewModel, openedSourceId: String?, snackbar: SnackbarHostState, onAdd: () -> Unit, showFab: Boolean,
+fun SourceListScreen(model: AppViewModel, openedSourceId: String?, snackbar: SnackbarHostState, onAdd: () -> Unit, showFab: Boolean,
     onOpenSource: (String) -> Unit, onOpenDiagnostics: () -> Unit) {
-    val loaded by model.sourceList.collectAsStateWithLifecycle()
-    val sources by model.sources.collectAsStateWithLifecycle()
-    val counts by model.sourceCounts.collectAsStateWithLifecycle()
-    val requests by model.fetchRequests.collectAsStateWithLifecycle()
-    val selection by model.selection.collectAsStateWithLifecycle()
-    val busy by model.busy.collectAsStateWithLifecycle()
-    val pending by model.pending.collectAsStateWithLifecycle()
-    val readiness by model.readiness.collectAsStateWithLifecycle()
-    val notice by model.notice.collectAsStateWithLifecycle()
+    val list = model.sources
+    val loaded by list.loaded.collectAsStateWithLifecycle()
+    val sources by list.sources.collectAsStateWithLifecycle()
+    val counts by list.counts.collectAsStateWithLifecycle()
+    val requests by list.requests.collectAsStateWithLifecycle()
+    val selection by list.selection.collectAsStateWithLifecycle()
+    val notice by list.notice.collectAsStateWithLifecycle()
+    val busy by model.operations.busy.collectAsStateWithLifecycle()
+    val pending by model.review.pending.collectAsStateWithLifecycle()
+    val readiness by model.settings.readiness.collectAsStateWithLifecycle()
     var selecting by rememberSaveable { mutableStateOf(false) }
     var deleteIds by rememberSaveable { mutableStateOf(listOf<String>()) }
     val now by produceState(System.currentTimeMillis(), sources) {
@@ -66,11 +66,11 @@ fun SourceListScreen(model: LibraryViewModel, openedSourceId: String?, snackbar:
         val result = notice ?: return@LaunchedEffect
         haptics.performHapticFeedback(if (result.failed == 0) HapticFeedbackType.Confirm else HapticFeedbackType.Reject)
         // A single switch outside selection mode reports through the row status; the failed id is not kept selected.
-        if (!selecting && result.succeeded + result.failed == 1) model.clearSelection()
+        if (!selecting && result.succeeded + result.failed == 1) list.clearSelection()
         if (resultMessage != null) snackbar.showSnackbar(resultMessage, withDismissAction = true, duration = SnackbarDuration.Long)
-        model.consumeNotice()
+        list.consumeNotice()
     }
-    fun exitSelection() { selecting = false; model.clearSelection() }
+    fun exitSelection() { selecting = false; list.clearSelection() }
     androidx.activity.compose.BackHandler(selecting) { exitSelection() }
 
     val listState = rememberLazyListState()
@@ -83,16 +83,16 @@ fun SourceListScreen(model: LibraryViewModel, openedSourceId: String?, snackbar:
                 title = { Text(stringResource(R.string.selection_count, selection.size)) },
                 navigationIcon = { IconButton(onClick = ::exitSelection) { Icon(AppIcons.Close, stringResource(R.string.selection_exit)) } },
                 actions = {
-                    TextButton(onClick = model::selectAll, enabled = !busy) { Text(stringResource(R.string.selection_all)) }
-                    TextButton(onClick = model::clearSelection, enabled = !busy && selection.isNotEmpty()) { Text(stringResource(R.string.selection_clear)) }
+                    TextButton(onClick = list::selectAll, enabled = !busy) { Text(stringResource(R.string.selection_all)) }
+                    TextButton(onClick = list::clearSelection, enabled = !busy && selection.isNotEmpty()) { Text(stringResource(R.string.selection_clear)) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             ) else TopAppBar(
                 title = { Text(stringResource(R.string.sources_title)) },
                 subtitle = { Text(summaryText(summary)) },
                 actions = {
-                    TooltipIconButton(AppIcons.Sync, stringResource(R.string.action_sync_all), model::fetchAll,
-                        enabled = !busy && sources.any { it.enabled && it.lifecycle == "ACTIVE" })
+                    TooltipIconButton(AppIcons.Sync, stringResource(R.string.action_sync_all), { list.fetchAll() },
+                        enabled = !busy && sources.any { it.syncable })
                     TextButton(onClick = { selecting = true }, enabled = !busy && sources.isNotEmpty()) { Text(stringResource(R.string.action_select)) }
                 },
                 scrollBehavior = scrollBehavior,
@@ -119,7 +119,7 @@ fun SourceListScreen(model: LibraryViewModel, openedSourceId: String?, snackbar:
                 pending?.let {
                     item(key = "pending") {
                         Banner(Tone.Problem, stringResource(R.string.banner_interrupted_title), stringResource(R.string.banner_interrupted_body),
-                            Modifier.padding(bottom = 12.dp).animateItem(), stringResource(R.string.banner_interrupted_action), model::resumeSync, enabled = !busy)
+                            Modifier.padding(bottom = 12.dp).animateItem(), stringResource(R.string.banner_interrupted_action), model.review::open, enabled = !busy)
                     }
                 }
                 val readinessTitle = when (readiness) {
@@ -128,7 +128,7 @@ fun SourceListScreen(model: LibraryViewModel, openedSourceId: String?, snackbar:
                     SyncReadiness.PROBE_UNFINISHED -> R.string.banner_unfinished_title
                     else -> null
                 }
-                if (readinessTitle != null && sources.any { it.enabled && it.lifecycle == "ACTIVE" }) {
+                if (readinessTitle != null && sources.any { it.syncable }) {
                     item(key = "readiness") {
                         Banner(Tone.Attention, stringResource(readinessTitle), stringResource(R.string.banner_diagnosis_body),
                             Modifier.padding(bottom = 12.dp).animateItem(), stringResource(R.string.banner_diagnosis_action), onOpenDiagnostics)
@@ -148,19 +148,19 @@ fun SourceListScreen(model: LibraryViewModel, openedSourceId: String?, snackbar:
                             count = counts.find { it.sourceId == source.id }?.count,
                             index = index, total = sources.size, selecting = selecting, selected = source.id in selection,
                             opened = !selecting && source.id == openedSourceId, busy = busy, now = now,
-                            onClick = { if (selecting) model.toggleSelection(source.id) else onOpenSource(source.id) },
+                            onClick = { if (selecting) list.toggleSelection(source.id) else onOpenSource(source.id) },
                             onLongClick = {
                                 if (!selecting) {
                                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    selecting = true; model.toggleSelection(source.id)
+                                    selecting = true; list.toggleSelection(source.id)
                                 }
                             },
                             onEnabled = { value ->
                                 haptics.performHapticFeedback(if (value) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff)
-                                model.enabled(source.id, value)
+                                list.setEnabled(source.id, value)
                             },
-                            onSync = { model.fetch(source.id) }, onEdit = { model.edit(source.id) }, onDelete = { deleteIds = listOf(source.id) },
-                            onRetry = { model.retry(source.id) },
+                            onSync = { list.fetch(source.id) }, onEdit = { model.form.edit(source.id) }, onDelete = { deleteIds = listOf(source.id) },
+                            onRetry = { list.retry(source.id) },
                             modifier = Modifier.animateItem(),
                         )
                     }
@@ -173,14 +173,14 @@ fun SourceListScreen(model: LibraryViewModel, openedSourceId: String?, snackbar:
                     val enabled = !busy && selection.isNotEmpty()
                     // Text buttons default to primary, which is too faint on the vibrant (primary container) toolbar.
                     val colors = ButtonDefaults.textButtonColors(contentColor = LocalContentColor.current)
-                    TextButton(onClick = { model.batch(selection, "ENABLE") }, enabled = enabled, colors = colors) { Text(stringResource(R.string.action_enable)) }
-                    TextButton(onClick = { model.batch(selection, "DISABLE") }, enabled = enabled, colors = colors) { Text(stringResource(R.string.action_disable)) }
+                    TextButton(onClick = { list.batch(selection, BatchOperation.ENABLE) }, enabled = enabled, colors = colors) { Text(stringResource(R.string.action_enable)) }
+                    TextButton(onClick = { list.batch(selection, BatchOperation.DISABLE) }, enabled = enabled, colors = colors) { Text(stringResource(R.string.action_disable)) }
                     TextButton(onClick = { deleteIds = selection.toList() }, enabled = enabled, colors = colors) { Text(stringResource(R.string.action_delete)) }
                 }
             }
         }
     }
-    if (deleteIds.isNotEmpty()) DeleteDialog(deleteIds.size, onConfirm = { model.batch(deleteIds, "DELETE"); deleteIds = emptyList() },
+    if (deleteIds.isNotEmpty()) DeleteDialog(deleteIds.size, onConfirm = { list.batch(deleteIds, BatchOperation.DELETE); deleteIds = emptyList() },
         onDismiss = { deleteIds = emptyList() })
 }
 
@@ -221,7 +221,7 @@ internal fun SourceRow(
         leadingContent = if (selecting) ({ Checkbox(checked = selected, onCheckedChange = null) }) else null,
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                val active = source.lifecycle == "ACTIVE"
+                val active = source.listed
                 val switchDescription = stringResource(if (source.enabled) R.string.source_switch_on else R.string.source_switch_off, source.name)
                 Switch(checked = source.enabled, onCheckedChange = onEnabled, enabled = !busy && !selecting && active,
                     modifier = Modifier.testTag("source-enabled-${source.id}").semantics { contentDescription = switchDescription })
@@ -258,7 +258,7 @@ private fun SourceMenu(source: SourceEntity, status: SourceStatus, busy: Boolean
         IconButton(onClick = { expanded = true }, enabled = !busy) { Icon(AppIcons.MoreVert, stringResource(R.string.action_more)) }
         // Expressive menu: routine actions in one group, the destructive one apart in its own.
         DropdownMenuPopup(expanded = expanded, onDismissRequest = { expanded = false }) {
-            val active = source.lifecycle == "ACTIVE"
+            val active = source.listed
             // A failed write can be queued again once its cause (diagnosis, keyboard) is fixed.
             val retry = status.kind == StatusKind.ReflectFailed
             val count = if (retry) 3 else 2

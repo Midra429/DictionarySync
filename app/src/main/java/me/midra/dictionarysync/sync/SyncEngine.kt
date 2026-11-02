@@ -33,7 +33,7 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
     private suspend fun planned(sourceId: String, revision: Long, oldSnapshot: String?, snapshot: String?,
         bodyHash: String, desired: List<SyncKey>, retainSource: Boolean): Pair<SyncPlan, Map<String, SyncKey>> {
         installation(); access()
-        if (store.plans().any { it.state !in TERMINAL }) throw SyncStopped("RECOVER_PLAN_FIRST")
+        if (store.plans().any { !it.state.terminal }) throw SyncStopped("RECOVER_PLAN_FIRST")
         val old = store.references(sourceId).map { it.keyId }.toSet()
         val wanted = desired.distinctBy { it.id }
         val removed = old - wanted.map { it.id }.toSet()
@@ -49,32 +49,32 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
         return plan to allKeys
     }
     suspend fun preview(plan: SyncPlan, knownKeys: Map<String, SyncKey>? = null): SyncPreview {
-        if (plan.purpose != "APPLY") return recovery().preview(plan)
+        if (plan.purpose.recovery) return recovery().preview(plan)
         val keys = store.planKeys(plan.id)
         val allKeys = knownKeys ?: store.keys(keys.map { it.keyId }).associateBy { it.id }
         val wanted = keys.filter { it.desired }.map { allKeys.getValue(it.keyId) }
         val removed = keys.filter { !it.desired }.map { allKeys.getValue(it.keyId) }
         val other = store.sharedKeys(plan.sourceId, removed.map { it.id })
         val bindings = store.bindings(keys.map { it.keyId }).associateBy { it.keyId }
-        val deletes = removed.filter { it.id !in other && bindings[it.id]?.ownership == "OWNED" }
-        return SyncPreview(plan, wanted.filter { bindings[it.id] == null || bindings[it.id]?.ownership == "RELEASED" }, removed,
-            deletes, removed.count { bindings[it.id]?.ownership != "OWNED" }, removed.count { it.id in other }, wanted.size)
+        val deletes = removed.filter { it.id !in other && bindings[it.id]?.ownership == Ownership.OWNED }
+        return SyncPreview(plan, wanted.filter { needsInsert(bindings[it.id]) }, removed,
+            deletes, removed.count { bindings[it.id]?.ownership != Ownership.OWNED }, removed.count { it.id in other }, wanted.size)
     }
     suspend fun cancel(id: String) {
         val plan = store.plans().single { it.id == id }
-        if (store.plans().any { it.parentId == id && it.state !in TERMINAL }) throw SyncStopped("RECOVER_PLAN_FIRST")
+        if (store.plans().any { it.parentId == id && !it.state.terminal }) throw SyncStopped("RECOVER_PLAN_FIRST")
         if (store.operations(id).isNotEmpty()) throw SyncStopped("RECOVER_PLAN_FIRST")
-        if (plan.state in TERMINAL || (plan.purpose != "APPLY" && plan.approved)) throw SyncStopped("PLAN_CLOSED")
-        store.plan(plan.copy(state = "CANCELLED", finishedAt = now()))
+        if (plan.state.terminal || (plan.purpose.recovery && plan.approved)) throw SyncStopped("PLAN_CLOSED")
+        store.plan(plan.copy(state = PlanState.CANCELLED, finishedAt = now()))
     }
     suspend fun apply(id: String, approvalToken: String? = null) {
         installation()
         var plan = store.plans().single { it.id == id }
-        if (plan.purpose != "APPLY") { recovery().apply(plan, approvalToken); return }
-        if (plan.state == "COMMITTED") return
-        if (plan.state in TERMINAL) throw SyncStopped("PLAN_CLOSED")
+        if (plan.purpose.recovery) { recovery().apply(plan, approvalToken); return }
+        if (plan.state == PlanState.COMMITTED) return
+        if (plan.state.terminal) throw SyncStopped("PLAN_CLOSED")
         if (plan.installationId != installationId) throw SyncStopped("INSTALLATION_MISMATCH")
-        if (store.plans().any { it.id != id && it.state !in TERMINAL }) throw SyncStopped("RECOVER_PLAN_FIRST")
+        if (store.plans().any { it.id != id && !it.state.terminal }) throw SyncStopped("RECOVER_PLAN_FIRST")
         if (!plan.approved) {
             // A new fetch invalidates an unapproved preview. An in-progress plan keeps its pinned candidate.
             store.validate(plan)
@@ -95,7 +95,7 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
             val unchanged = changes
             reconcile(involved.mapNotNull { operations[it.id] }, allKeys, plan)
             audit(involved.filter { it.id !in operations }, plan)
-            store.plan(plan.copy(state = "ADDING", error = null))
+            store.plan(plan.copy(state = PlanState.ADDING, error = null))
             for (chunk in wanted.chunked(batch)) add(chunk, plan)
             // New keys must all be confirmed before releasing any old reference or deleting anything.
             // When nothing was written, the audit above already covers every key.
@@ -103,23 +103,24 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
             val removalOperations = store.operations(id).associateBy { it.keyId }
             reconcile(removed.mapNotNull { removalOperations[it.id] }, allKeys, plan)
             audit(removed.filter { it.id !in removalOperations }, plan)
-            store.plan(plan.copy(state = "REMOVING", error = null))
+            store.plan(plan.copy(state = PlanState.REMOVING, error = null))
             val shared = store.sharedKeys(plan.sourceId, removed.map { it.id })
             for (chunk in removed.filter { it.id !in shared }.chunked(batch)) {
                 boundary(plan)
-                val existing = chunk.mapNotNull { key -> removalOperations[key.id]?.takeIf { it.kind == "DELETE" } }
+                val existing = chunk.mapNotNull { key -> removalOperations[key.id]?.takeIf { it.kind == OperationKind.DELETE } }
                 reconcile(existing, allKeys, plan)
                 val reconciled = existing.map { it.keyId }.toSet()
                 val rest = chunk.filter { it.id !in reconciled }
                 val bindings = store.bindings(rest.map { it.id }).associateBy { it.keyId }
                 val targets = rest.filter { key ->
                     val binding = bindings[key.id] ?: throw SyncStopped("BINDING_MISSING")
-                    !(binding.ownership in setOf("BORROWED", "RELEASED") && binding.conflict == null)
+                    // Rows the app never inserted, or no longer holds, are released rather than deleted.
+                    !(binding.ownership in setOf(Ownership.BORROWED, Ownership.RELEASED) && binding.conflict == null)
                 }
                 audit(targets, plan)
                 for (key in targets) {
                     val binding = bindings.getValue(key.id)
-                    if (binding.ownership != "OWNED" || binding.installationId != installationId) throw SyncStopped("OWNERSHIP_UNKNOWN")
+                    if (binding.ownership != Ownership.OWNED || binding.installationId != installationId) throw SyncStopped("OWNERSHIP_UNKNOWN")
                 }
                 delete(targets.map { it to bindings.getValue(it.id) }, plan)
             }
@@ -130,7 +131,7 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
         } catch (error: Exception) {
             // A crash/DB failure can leave IN_FLIGHT intact. Never convert it back to PREPARED.
             // Cancellation leaves the plan in its current non-terminal phase; a later background pass resumes it.
-            if (error !is kotlinx.coroutines.CancellationException) store.plan(plan.copy(state = "RECOVERY_REQUIRED", error = (error as? SyncStopped)?.code ?: error.javaClass.simpleName))
+            if (error !is kotlinx.coroutines.CancellationException) store.plan(plan.copy(state = PlanState.RECOVERY_REQUIRED, error = SyncStopped.code(error)))
             throw error
         }
     }
@@ -159,18 +160,18 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
     internal suspend fun add(chunk: List<SyncKey>, plan: SyncPlan) {
         boundary(plan)
         val bindings = store.bindings(chunk.map { it.id }).associateBy { it.keyId }
-        val missing = chunk.filter { bindings[it.id] == null || bindings[it.id]?.ownership == "RELEASED" }
+        val missing = chunk.filter { needsInsert(bindings[it.id]) }
         for (key in missing) bindings[key.id]?.conflict?.let { throw SyncStopped(it) }
         val found = find(missing, plan)
         val borrowed = missing.filter { found.getValue(it.id).isNotEmpty() }.map {
-            ProviderBinding(it.id, installationId, ownership = "BORROWED", observed = SyncCodec.row(found.getValue(it.id).first()), observedAt = now())
+            ProviderBinding(it.id, installationId, ownership = Ownership.BORROWED, observed = SyncCodec.row(found.getValue(it.id).first()), observedAt = now())
         }
         val inserts = missing.filter { found.getValue(it.id).isEmpty() }
         // Journalled as IN_FLIGHT before the first call: an IN_FLIGHT insert whose row is absent never took effect.
         val ops = inserts.map { key ->
             val value = key.value()
-            SyncOperation(UUID.randomUUID().toString(), plan.id, key.id, "INSERT", phase = "IN_FLIGHT", attempts = 1,
-                expected = SyncCodec.pack(listOf("ABSENT", value.word, value.shortcut, value.locale, value.frequency.toString(), "0")))
+            SyncOperation(UUID.randomUUID().toString(), plan.id, key.id, OperationKind.INSERT, phase = OperationPhase.IN_FLIGHT, attempts = 1,
+                expected = SyncCodec.pack(listOf(ABSENT, value.word, value.shortcut, value.locale, value.frequency.toString(), "0")))
         }
         store.record(borrowed, ops)
         changes += borrowed.size + ops.size
@@ -190,7 +191,7 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
     }
     /** The returned ID is journalled before any readback, suspension or logging. */
     private suspend fun call(flight: SyncOperation, key: SyncKey): SyncOperation {
-        val saved = flight.copy(phase = "RETURNED", returnedId = gateway.insert(intended(flight, key)))
+        val saved = flight.copy(phase = OperationPhase.RETURNED, returnedId = gateway.insert(intended(flight, key)))
         store.operation(saved)
         return saved
     }
@@ -204,24 +205,24 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
             access(plan)
             val bindings = store.bindings(chunk.map { it.id }).associateBy { it.keyId }
             fun usable(binding: ProviderBinding?) = binding != null && binding.conflict == null && binding.installationId == installationId
-            val owned = chunk.mapNotNull { key -> bindings[key.id]?.takeIf { usable(it) && it.ownership == "OWNED" }?.observed?.let(SyncCodec::row) }
+            val owned = chunk.mapNotNull { key -> bindings[key.id]?.takeIf { usable(it) && it.ownership == Ownership.OWNED }?.observed?.let(SyncCodec::row) }
             val rows = gateway.byIds(owned.map { it.id })
-            val found = find(chunk.filter { key -> bindings[key.id]?.let { usable(it) && it.ownership == "BORROWED" } == true }, plan)
+            val found = find(chunk.filter { key -> bindings[key.id]?.let { usable(it) && it.ownership == Ownership.BORROWED } == true }, plan)
             for (key in chunk) {
                 try {
                     val binding = bindings[key.id] ?: continue
                     binding.conflict?.let { throw SyncStopped(it) }
                     if (binding.installationId != installationId) throw SyncStopped("INSTALLATION_MISMATCH")
                     when (binding.ownership) {
-                        "OWNED" -> {
+                        Ownership.OWNED -> {
                             val row = binding.observed?.let(SyncCodec::row) ?: throw SyncStopped("OWNERSHIP_UNKNOWN")
                             val actual = rows[row.id]
                             if (actual != row) conflict(key, binding, if (actual == null) "EXTERNAL_DELETE" else "EXTERNAL_EDIT")
                         }
                         // Contents are only an existing match; never elevate to OWNED, even after a DB loss.
-                        "BORROWED" -> if (found.getValue(key.id).isEmpty()) conflict(key, binding, "BORROWED_LOST")
-                        "RELEASED" -> Unit // A verified deletion is explained by its Journal; no conflict is cleared.
-                        else -> throw SyncStopped("OWNERSHIP_UNKNOWN")
+                        Ownership.BORROWED -> if (found.getValue(key.id).isEmpty()) conflict(key, binding, "BORROWED_LOST")
+                        Ownership.RELEASED -> Unit // A verified deletion is explained by its Journal; no conflict is cleared.
+                        Ownership.UNKNOWN -> throw SyncStopped("OWNERSHIP_UNKNOWN")
                     }
                 } catch (e: SyncStopped) {
                     failed?.invoke(key, e) ?: throw e
@@ -230,7 +231,7 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
         }
     }
     private suspend fun conflict(key: SyncKey, binding: ProviderBinding, reason: String): Nothing {
-        store.binding(binding.copy(ownership = if (binding.ownership == "OWNED") "RELEASED" else binding.ownership,
+        store.binding(binding.copy(ownership = if (binding.ownership == Ownership.OWNED) Ownership.RELEASED else binding.ownership,
             conflict = reason, observedAt = now()))
         throw SyncStopped(reason)
     }
@@ -239,10 +240,11 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
         // Recheck at the boundary: an external insertion after planning becomes BORROWED.
         val rows = find(key, plan)
         if (rows.isNotEmpty()) {
-            store.verified(ProviderBinding(key.id, installationId, ownership = "BORROWED", observed = SyncCodec.row(rows.first()), observedAt = now()), op.copy(phase = "VERIFIED", error = "EXISTING_MATCH"))
+            store.verified(ProviderBinding(key.id, installationId, ownership = Ownership.BORROWED, observed = SyncCodec.row(rows.first()), observedAt = now()),
+                op.copy(phase = OperationPhase.VERIFIED, error = EXISTING_MATCH))
             return
         }
-        val flight = op.copy(phase = "IN_FLIGHT", attempts = op.attempts + 1)
+        val flight = op.copy(phase = OperationPhase.IN_FLIGHT, attempts = op.attempts + 1)
         store.operation(flight)
         changes++
         val saved = call(flight, key)
@@ -251,14 +253,14 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
     }
     internal fun intended(op: SyncOperation, key: SyncKey): me.midra.dictionarysync.probe.ProbeValue {
         val fields = op.expected?.let(SyncCodec::unpack) ?: throw SyncStopped("INSERT_INTENT_MISSING")
-        if (fields.size != 6 || fields[0] != "ABSENT" || fields[5] != "0") throw SyncStopped("INSERT_INTENT_INVALID")
+        if (fields.size != 6 || fields[0] != ABSENT || fields[5] != "0") throw SyncStopped("INSERT_INTENT_INVALID")
         val value = me.midra.dictionarysync.probe.ProbeValue(fields[1]!!, fields[2], fields[3], fields[4]!!.toInt())
         if (!key.matches(value.row(0))) throw SyncStopped("INSERT_INTENT_INVALID")
         return value
     }
     private suspend fun unknown(op: SyncOperation, key: SyncKey): Nothing {
-        store.verified(ProviderBinding(key.id, installationId, ownership = "UNKNOWN", observed = null, observedAt = now(), conflict = "INSERT_UNKNOWN"),
-            op.copy(phase = "AMBIGUOUS", error = "INSERT_UNKNOWN"))
+        store.verified(ProviderBinding(key.id, installationId, ownership = Ownership.UNKNOWN, observed = null, observedAt = now(), conflict = "INSERT_UNKNOWN"),
+            op.copy(phase = OperationPhase.AMBIGUOUS, error = "INSERT_UNKNOWN"))
         throw SyncStopped("INSERT_UNKNOWN")
     }
     /**
@@ -268,7 +270,7 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
     internal suspend fun delete(targets: List<Pair<SyncKey, ProviderBinding>>, plan: SyncPlan) {
         if (targets.isEmpty()) return
         val ops = targets.map { (key, binding) ->
-            SyncOperation(UUID.randomUUID().toString(), plan.id, key.id, "DELETE", phase = "IN_FLIGHT", attempts = 1, expected = binding.observed)
+            SyncOperation(UUID.randomUUID().toString(), plan.id, key.id, OperationKind.DELETE, phase = OperationPhase.IN_FLIGHT, attempts = 1, expected = binding.observed)
         }
         store.record(emptyList(), ops)
         changes += ops.size
@@ -278,7 +280,7 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
                 currentCoroutineContext().ensureActive()
                 val expected = op.expected?.let(SyncCodec::row) ?: throw SyncStopped("OWNERSHIP_UNKNOWN")
                 val count = gateway.delete(expected)
-                returned += op.copy(phase = "RETURNED", result = count)
+                returned += op.copy(phase = OperationPhase.RETURNED, result = count)
                 if (count != 1) break // Reconciled below as DELETE_ZERO or DELETE_MULTIPLE.
             }
         } finally {
@@ -293,11 +295,11 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
             val binding = requireNotNull(store.binding(key.id))
             conflict(key, binding, "EXTERNAL_EDIT_OR_DELETE")
         }
-        val flight = op.copy(phase = "IN_FLIGHT", attempts = op.attempts + 1)
+        val flight = op.copy(phase = OperationPhase.IN_FLIGHT, attempts = op.attempts + 1)
         store.operation(flight)
         changes++
         val count = gateway.delete(expected)
-        val saved = flight.copy(phase = "RETURNED", result = count)
+        val saved = flight.copy(phase = OperationPhase.RETURNED, result = count)
         store.operation(saved)
         reconcile(saved, key, plan)
     }
@@ -312,11 +314,11 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
             for (op in chunk) {
                 val key = keys.getValue(op.keyId)
                 when {
-                    op.kind != "INSERT" -> readback += op
-                    op.phase == "PREPARED" -> insert(op, key, plan)
-                    op.error == "EXISTING_MATCH" -> existing += key
+                    op.kind != OperationKind.INSERT -> readback += op
+                    op.phase == OperationPhase.PREPARED -> insert(op, key, plan)
+                    op.error == EXISTING_MATCH -> existing += key
                     op.returnedId != null -> readback += op
-                    op.phase == "IN_FLIGHT" -> unsent += op
+                    op.phase == OperationPhase.IN_FLIGHT -> unsent += op
                     else -> unknown(op, key) // Never infer ownership or blindly issue another insert.
                 }
             }
@@ -327,10 +329,10 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
             for (op in unsent) {
                 val key = keys.getValue(op.keyId)
                 if (found.getValue(key.id).isNotEmpty()) unknown(op, key)
-                insert(op.copy(phase = "PREPARED"), key, plan)
+                insert(op.copy(phase = OperationPhase.PREPARED), key, plan)
             }
             val expected = readback.associate { op ->
-                op.id to if (op.kind == "INSERT") intended(op, keys.getValue(op.keyId)).row(op.returnedId!!)
+                op.id to if (op.kind == OperationKind.INSERT) intended(op, keys.getValue(op.keyId)).row(op.returnedId!!)
                 else {
                     // 0 and >1 are evidence of an incompatible predicate or a race; do not call either success.
                     if (op.result != null && op.result != 1) throw SyncStopped(if (op.result == 0) "DELETE_ZERO" else "DELETE_MULTIPLE")
@@ -345,21 +347,23 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
                     val key = keys.getValue(op.keyId)
                     val wanted = expected.getValue(op.id)
                     val actual = rows[wanted.id]
-                    if (op.kind == "INSERT") {
+                    if (op.kind == OperationKind.INSERT) {
                         if (actual != wanted) {
                             val binding = bindings[key.id]
-                                ?: ProviderBinding(key.id, installationId, ownership = "UNKNOWN", observed = null, observedAt = now())
+                                ?: ProviderBinding(key.id, installationId, ownership = Ownership.UNKNOWN, observed = null, observedAt = now())
                             conflict(key, binding, "INSERT_READBACK_MISMATCH")
                         }
                         val binding = bindings[key.id]
                         binding?.conflict?.let { throw SyncStopped(it) }
-                        val owned = ProviderBinding(key.id, installationId, ownership = "OWNED", observed = SyncCodec.row(actual), observedAt = now())
+                        val owned = ProviderBinding(key.id, installationId, ownership = Ownership.OWNED, observed = SyncCodec.row(actual), observedAt = now())
                         // An already verified insert that still reads back the same needs no new record.
-                        if (op.phase != "VERIFIED" || binding?.copy(observedAt = owned.observedAt) != owned) verified += owned to op.copy(phase = "VERIFIED")
-                    } else if (actual == null && op.phase != "PREPARED") {
+                        if (op.phase != OperationPhase.VERIFIED || binding?.copy(observedAt = owned.observedAt) != owned)
+                            verified += owned to op.copy(phase = OperationPhase.VERIFIED)
+                    } else if (actual == null && op.phase != OperationPhase.PREPARED) {
                         val binding = requireNotNull(bindings[key.id])
-                        if (op.phase != "VERIFIED" || binding.ownership != "RELEASED") verified += binding.copy(ownership = "RELEASED", observedAt = now()) to op.copy(phase = "VERIFIED")
-                    } else if (actual == wanted && op.phase != "VERIFIED" && op.result == null) {
+                        if (op.phase != OperationPhase.VERIFIED || binding.ownership != Ownership.RELEASED)
+                            verified += binding.copy(ownership = Ownership.RELEASED, observedAt = now()) to op.copy(phase = OperationPhase.VERIFIED)
+                    } else if (actual == wanted && op.phase != OperationPhase.VERIFIED && op.result == null) {
                         delete(op, key, plan) // Only a proven unchanged ID, after an unknown result.
                     } else throw SyncStopped("DELETE_READBACK_MISMATCH")
                 }
@@ -369,9 +373,14 @@ class SyncEngine(private val store: SyncStore, private val gateway: SyncGateway,
         }
     }
     private fun recovery() = SyncRecoveryEngine(store, gateway, installationId, this, now)
-    suspend fun prepareRecovery(id: String, purpose: String): SyncPreview = recovery().prepare(id, purpose)
+    suspend fun prepareRecovery(id: String, purpose: PlanPurpose): SyncPreview = recovery().prepare(id, purpose)
     companion object {
-        val TERMINAL = setOf("COMMITTED", "CANCELLED", "FAILED_PRESERVED")
+        /** The insert intent's marker that the key had no row when planned. */
+        private const val ABSENT = "ABSENT"
+        /** An insert that found an existing match and borrowed it instead. */
+        internal const val EXISTING_MATCH = "EXISTING_MATCH"
+        /** A key with no binding, or one the app no longer holds, is inserted (or borrowed) when wanted. */
+        internal fun needsInsert(binding: ProviderBinding?) = binding == null || binding.ownership == Ownership.RELEASED
         /** Below SQLite's 999 bound-variable limit, so a batch is one IN query on older Android versions. */
         const val BATCH = 900
         /** Managed shared-dictionary rows, including the old/new union while a source is replaced. */

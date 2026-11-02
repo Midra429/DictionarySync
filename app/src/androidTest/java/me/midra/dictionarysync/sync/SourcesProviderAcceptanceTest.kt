@@ -7,7 +7,7 @@ import kotlinx.coroutines.runBlocking
 import me.midra.dictionarysync.data.local.DictionaryDatabase
 import me.midra.dictionarysync.data.source.Download
 import me.midra.dictionarysync.data.source.Downloader
-import me.midra.dictionarysync.library.LibraryRepository
+import me.midra.dictionarysync.AppContainer
 import me.midra.dictionarysync.library.RequirementsStorageTest
 import me.midra.dictionarysync.probe.*
 import org.junit.Assert.*
@@ -15,6 +15,10 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import me.midra.dictionarysync.data.local.SourceLifecycle
+import me.midra.dictionarysync.save
+import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.ui.AppViewModel
 
 /** Real execution requires separate, manual diagnosis in the acceptance app. Never erase its ledger. */
 @RunWith(AndroidJUnit4::class)
@@ -61,7 +65,7 @@ class SourcesProviderAcceptanceTest {
     }
 
     private suspend fun scenario(db: DictionaryDatabase, gateway: SyncGateway, witness: ProbeRow, prefix: String) {
-        val sync = SyncRepository(context, db) {
+        val sync = SourceSync(context, db) {
             SyncEngine(RoomSyncStore(db), gateway, SyncCoordinator.installation(context))
         }
         val shared = SyncKey.of("ja", "${prefix}shared", "でぃーえすきょうゆう")
@@ -71,41 +75,41 @@ class SourcesProviderAcceptanceTest {
         val borrowed = SyncKey.from(witness)!!
         fun body(vararg keys: SyncKey) = keys.joinToString("\n") { "${it.shortcut.orEmpty()}\t${it.word}\t名詞" }
         var aBody = body(aWord, shared, borrowed)
-        val library = LibraryRepository(context, db, synchronizeSource = { sync.synchronize(it) }) { url, _, _ ->
+        val library = testApp(context, db, sync = sync) { url, _, _ ->
             val bytes = (if (url.endsWith("/a")) aBody else body(bWord, shared)).toByteArray()
             Download(bytes, Downloader.sha256(bytes), url, "text/plain")
         }
-        val a = library.save(null, "人工ソースA", "https://example.org/sources-trial/a", "AUTO", "AUTO", "AUTO")
-        val b = library.save(null, "人工ソースB", "https://example.org/sources-trial/b", "AUTO", "AUTO", "AUTO", 6)
-        val runner = FetchRunner(library)
+        val a = library.editor.save(null, "人工ソースA", "https://example.org/sources-trial/a", "AUTO", "AUTO", "AUTO")
+        val b = library.editor.save(null, "人工ソースB", "https://example.org/sources-trial/b", "AUTO", "AUTO", "AUTO", 6)
+        val runner = library.fetchRunner
         runner.runOne(); runner.runOne()
         for (key in listOf(aWord, bWord, shared)) assertEquals(1, gateway.find(key).size)
         val sharedRow = gateway.find(shared).single()
         assertEquals(witness, gateway.byId(witness.id))
-        assertEquals(1, db.sync().bindings().count { it.ownership == "BORROWED" })
+        assertEquals(1, db.sync().bindings().count { it.ownership == Ownership.BORROWED })
 
         // Exercise the current fetch -> pending apply path, without prepare/apply approval calls.
         aBody = body(replacement, shared, borrowed)
-        library.requestAllFetches()
+        library.scheduler.requestAll()
         runner.runOne(); runner.runOne()
         assertTrue(gateway.find(aWord).isEmpty())
         assertEquals(1, gateway.find(replacement).size)
         assertEquals(sharedRow, gateway.find(shared).single())
-        library.requestAllFetches()
+        library.scheduler.requestAll()
         runner.runOne(); runner.runOne()
         assertEquals(1, gateway.find(replacement).size)
         assertEquals(sharedRow, gateway.find(shared).single())
 
-        val snapshot = library.dao.source(a)!!.latestSnapshot!!
+        val snapshot = library.database.library().source(a)!!.latestSnapshot!!
         assertTrue(sync.setEnabled(a, false))
         assertTrue(gateway.find(replacement).isEmpty())
         assertEquals(sharedRow, gateway.find(shared).single())
-        assertEquals(snapshot, library.dao.source(a)!!.latestSnapshot)
-        assertEquals(3, library.dao.entries(snapshot).size)
+        assertEquals(snapshot, library.database.library().source(a)!!.latestSnapshot)
+        assertEquals(3, library.database.library().entries(snapshot).size)
         assertTrue(sync.setEnabled(a, true))
         assertEquals(1, gateway.find(replacement).size)
 
-        // Same sequential per-source operations used by LibraryViewModel.batch; UI is tested separately.
+        // Same sequential per-source operations used by AppViewModel.batch; UI is tested separately.
         assertTrue(sync.delete(a))
         assertTrue(gateway.find(replacement).isEmpty())
         assertEquals(sharedRow, gateway.find(shared).single())
@@ -113,8 +117,8 @@ class SourcesProviderAcceptanceTest {
         for (key in listOf(aWord, bWord, shared, replacement)) assertTrue(gateway.find(key).isEmpty())
         assertEquals(witness, gateway.byId(witness.id))
         assertTrue(db.sync().references().isEmpty())
-        assertTrue(db.sync().plans().all { it.state == "COMMITTED" })
-        assertEquals("DELETED", library.dao.source(a)!!.lifecycle)
-        assertEquals("DELETED", library.dao.source(b)!!.lifecycle)
+        assertTrue(db.sync().plans().all { it.state == PlanState.COMMITTED })
+        assertEquals(SourceLifecycle.DELETED, library.database.library().source(a)!!.lifecycle)
+        assertEquals(SourceLifecycle.DELETED, library.database.library().source(b)!!.lifecycle)
     }
 }

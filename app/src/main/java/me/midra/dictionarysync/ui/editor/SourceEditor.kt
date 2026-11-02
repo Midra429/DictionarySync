@@ -33,14 +33,17 @@ import me.midra.dictionarysync.R
 import me.midra.dictionarysync.data.local.SourceEntity
 import me.midra.dictionarysync.ui.common.*
 import me.midra.dictionarysync.ui.sources.Reason
+import me.midra.dictionarysync.data.parser.DictionaryParser
+import me.midra.dictionarysync.data.source.SourceRules
+import me.midra.dictionarysync.library.SourceDraft
 import me.midra.dictionarysync.ui.sources.Tone
 import me.midra.dictionarysync.ui.sources.dateTime
 import me.midra.dictionarysync.ui.sources.reasonOf
 
-internal val FORMATS = listOf("AUTO", "TSV", "MS_WORDLIST", "PLIST_XML", "APPLE_CSV")
+internal val FORMATS = DictionaryParser.formats.toList()
 internal val LANGUAGES = listOf("AUTO", "ja", "en", "ALL", "CUSTOM")
-internal val ENCODINGS = listOf("AUTO", "UTF-8", "UTF-16LE", "UTF-16BE", "windows-31j")
-internal val INTERVALS = listOf(1, 6, 12, 24, 72, 168)
+internal val ENCODINGS = listOf("AUTO") + DictionaryParser.ENCODINGS
+internal val INTERVALS = SourceRules.intervals
 private val MENU_INSET = 4.dp
 private val ITEM_SPACING = 2.dp
 private val HEADER_INSET = 12.dp
@@ -50,7 +53,7 @@ private val OPTION_REASONS = FORMAT_REASONS + setOf(Reason.Locale, Reason.Encodi
 
 /** Draft input of the form, kept outside the dialog window so it survives recreation and process death. */
 @Stable
-class SourceFormState(name: MutableState<String>, url: MutableState<String>, locale: MutableState<String>, format: MutableState<String>,
+class SourceDraftInput(name: MutableState<String>, url: MutableState<String>, locale: MutableState<String>, format: MutableState<String>,
     encoding: MutableState<String>, interval: MutableIntState, manualLanguage: MutableState<Boolean>) {
     var name by name
     var url by url
@@ -59,10 +62,11 @@ class SourceFormState(name: MutableState<String>, url: MutableState<String>, loc
     var encoding by encoding
     var interval by interval
     var manualLanguage by manualLanguage
+    fun draft() = SourceDraft(name, url, locale, format, encoding, interval)
 }
 
 @Composable
-fun rememberSourceFormState(source: SourceEntity?): SourceFormState {
+fun rememberSourceDraftInput(source: SourceEntity?): SourceDraftInput {
     val name = rememberSaveable(source?.id) { mutableStateOf(source?.name ?: "") }
     val url = rememberSaveable(source?.id) { mutableStateOf(source?.url ?: "") }
     val locale = rememberSaveable(source?.id) { mutableStateOf(source?.locale ?: "AUTO") }
@@ -70,14 +74,14 @@ fun rememberSourceFormState(source: SourceEntity?): SourceFormState {
     val encoding = rememberSaveable(source?.id) { mutableStateOf(source?.encoding ?: "AUTO") }
     val interval = rememberSaveable(source?.id) { mutableIntStateOf(source?.syncIntervalHours ?: 24) }
     val manual = rememberSaveable(source?.id) { mutableStateOf(locale.value !in setOf("AUTO", "ja", "en", "ALL")) }
-    return remember(name, url, locale, format, encoding, interval, manual) { SourceFormState(name, url, locale, format, encoding, interval, manual) }
+    return remember(name, url, locale, format, encoding, interval, manual) { SourceDraftInput(name, url, locale, format, encoding, interval, manual) }
 }
 
 /** Full-screen add/edit form. Input survives recreation; nothing is saved until the fetch and parse succeed. */
 @Composable
 fun SourceEditorDialog(source: SourceEntity?, busy: Boolean, fetching: Boolean, retryAt: Long, error: String?, onDismissError: () -> Unit,
-    onStop: () -> Unit, onDismiss: () -> Unit, save: (String, String, String, String, String, Int) -> Unit) {
-    val state = rememberSourceFormState(source)
+    onStop: () -> Unit, onDismiss: () -> Unit, save: (SourceDraft) -> Unit) {
+    val state = rememberSourceDraftInput(source)
     // Back while fetching stops the fetch and keeps the form; otherwise it closes the form.
     Dialog(onDismissRequest = { if (fetching) onStop() else if (!busy) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
@@ -88,8 +92,8 @@ fun SourceEditorDialog(source: SourceEntity?, busy: Boolean, fetching: Boolean, 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class, ExperimentalMaterial3Api::class)
 @Composable
 internal fun SourceForm(source: SourceEntity?, busy: Boolean, onDismiss: () -> Unit, retryAt: Long = 0, error: String? = null,
-    onDismissError: () -> Unit = {}, state: SourceFormState = rememberSourceFormState(source),
-    fetching: Boolean = busy, onStop: () -> Unit = {}, save: (String, String, String, String, String, Int) -> Unit) {
+    onDismissError: () -> Unit = {}, state: SourceDraftInput = rememberSourceDraftInput(source),
+    fetching: Boolean = busy, onStop: () -> Unit = {}, save: (SourceDraft) -> Unit) {
     var name by state::name
     var url by state::url
     var locale by state::locale
@@ -111,7 +115,7 @@ internal fun SourceForm(source: SourceEntity?, busy: Boolean, onDismiss: () -> U
                     else IconButton(onClick = onDismiss, enabled = !busy) { Icon(AppIcons.Close, stringResource(R.string.action_cancel)) }
                 },
                 actions = {
-                    Button(onClick = { save(name, url, locale, format, encoding, interval) }, enabled = canSave,
+                    Button(onClick = { save(state.draft()) }, enabled = canSave,
                         modifier = Modifier.padding(end = 8.dp)) {
                         Text(stringResource(if (source == null) R.string.editor_add else R.string.editor_save))
                     }
@@ -139,7 +143,7 @@ internal fun SourceForm(source: SourceEntity?, busy: Boolean, onDismiss: () -> U
                     singleLine = true, isError = reason in setOf(Reason.Url, Reason.Duplicate),
                     supportingText = { Text(stringResource(R.string.editor_url_support)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { if (canSave) save(name, url, locale, format, encoding, interval) }),
+                    keyboardActions = KeyboardActions(onDone = { if (canSave) save(state.draft()) }),
                     modifier = Modifier.fillMaxWidth())
                 if (source != null) Text(stringResource(R.string.editor_keep_note), style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)

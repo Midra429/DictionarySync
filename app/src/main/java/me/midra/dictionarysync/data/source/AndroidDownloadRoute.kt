@@ -9,6 +9,18 @@ import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.HttpsURLConnection
 import me.midra.dictionarysync.data.parser.DictionaryProblem
 
+/** Downloads a dictionary file, conditionally with [validators]. The network seam of fetching; tests replace it. */
+fun interface DictionaryDownload {
+    fun get(url: String, wifiOnly: Boolean, validators: HttpValidators?): Download
+
+    companion object {
+        /** Over the default network, which [wifiOnly] restricts to Wi-Fi. */
+        fun android(context: Context) = DictionaryDownload { url, wifiOnly, validators ->
+            AndroidDownloadRoute(context.applicationContext, wifiOnly).use { Downloader().get(url, it, validators) }
+        }
+    }
+}
+
 /** Bind each connection to the approved default Network; never fall back to cellular or bypass VPN. */
 class AndroidDownloadRoute(context: Context, private val wifiOnly: Boolean) : DownloadRoute {
     private val manager = context.getSystemService(ConnectivityManager::class.java)

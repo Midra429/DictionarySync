@@ -16,13 +16,16 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import me.midra.dictionarysync.data.local.*
 import me.midra.dictionarysync.data.source.*
-import me.midra.dictionarysync.library.LibraryRepository
-import me.midra.dictionarysync.library.LibraryViewModel
+import me.midra.dictionarysync.AppContainer
+import me.midra.dictionarysync.ui.AppViewModel
 import me.midra.dictionarysync.library.RequirementsStorageTest
 import me.midra.dictionarysync.probe.ProbeRow
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
+import me.midra.dictionarysync.save
+import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.ui.sources.BatchOperation
 
 /** Screen actions do not write the Provider themselves; a write still run from the screen is handed off if the screen goes away. */
 @RunWith(AndroidJUnit4::class)
@@ -45,7 +48,7 @@ class ClosedScreenHandoffTest {
             return delegate.findAll(keys)
         }
     }
-    private fun repo(db: DictionaryDatabase) = LibraryRepository(context, db) { url, _, _ ->
+    private fun repo(db: DictionaryDatabase, sync: SourceSync, dispatch: FetchDispatch) = testApp(context, db, sync = sync, dispatch = dispatch) { url, _, _ ->
         val bytes = "よみ\t引継語\t名詞".toByteArray(); Download(bytes, Downloader.sha256(bytes), url, "text/plain")
     }
 
@@ -54,18 +57,17 @@ class ClosedScreenHandoffTest {
         val store = ViewModelStore()
         try {
             val gateway = Blocking(RequirementsStorageTest.Gateway())
-            val repo = repo(db)
-            val id = repo.save(null, "引継", "https://example.org/handoff", "AUTO", "TSV", "AUTO")
-            db.library().updateSource(db.library().source(id)!!.copy(enabled = false, syncState = "REMOVED"))
             val dispatch = CountingDispatch()
-            val model = LibraryViewModel(context.applicationContext as Application, SavedStateHandle(), repo,
-                SyncRepository(context, db) { SyncEngine(RoomSyncStore(db), gateway, "handoff") }, dispatch)
+            val repo = repo(db, SourceSync(context, db) { SyncEngine(RoomSyncStore(db), gateway, "handoff") }, dispatch)
+            val id = repo.editor.save(null, "引継", "https://example.org/handoff", "AUTO", "TSV", "AUTO")
+            db.library().updateSource(db.library().source(id)!!.copy(enabled = false, syncState = SyncState.REMOVED))
+            val model = AppViewModel(context.applicationContext as Application, SavedStateHandle(), repo)
             store.put("handoff", model)
-            withTimeout(10_000) { while (model.busy.value) delay(20) }
+            withTimeout(10_000) { while (model.operations.busy.value) delay(20) }
             dispatch.applies.set(0)
-            model.batch(listOf(id), "ENABLE")
-            withTimeout(10_000) { while (model.notice.value == null) delay(20) }
-            assertEquals("UPDATE_PENDING", db.library().source(id)!!.syncState)
+            model.sources.batch(listOf(id), BatchOperation.ENABLE)
+            withTimeout(10_000) { while (model.sources.notice.value == null) delay(20) }
+            assertEquals(SyncState.UPDATE_PENDING, db.library().source(id)!!.syncState)
             assertEquals(0, gateway.delegate.inserts)
             assertTrue(dispatch.applies.get() > 0)
         } finally { store.clear(); db.close() }
@@ -76,24 +78,24 @@ class ClosedScreenHandoffTest {
         val store = ViewModelStore()
         val gateway = Blocking(RequirementsStorageTest.Gateway())
         try {
-            val repo = repo(db)
-            val sync = SyncRepository(context, db) { SyncEngine(RoomSyncStore(db), gateway, "handoff") }
-            val id = repo.save(null, "引継", "https://example.org/handoff", "AUTO", "TSV", "AUTO")
-            sync.prepare(id) // An unfinished, not yet approved plan: reviewed and applied from the screen.
+            val sync = SourceSync(context, db) { SyncEngine(RoomSyncStore(db), gateway, "handoff") }
             val dispatch = CountingDispatch()
-            val model = LibraryViewModel(context.applicationContext as Application, SavedStateHandle(), repo, sync, dispatch)
+            val repo = repo(db, sync, dispatch)
+            val id = repo.editor.save(null, "引継", "https://example.org/handoff", "AUTO", "TSV", "AUTO")
+            sync.prepare(id) // An unfinished, not yet approved plan: reviewed and applied from the screen.
+            val model = AppViewModel(context.applicationContext as Application, SavedStateHandle(), repo)
             store.put("handoff", model)
-            val collector = launch(Dispatchers.Default) { model.pending.collect {} }
-            withTimeout(10_000) { while (model.busy.value || model.pending.value == null) delay(20) }
+            val collector = launch(Dispatchers.Default) { model.review.pending.collect {} }
+            withTimeout(10_000) { while (model.operations.busy.value || model.review.pending.value == null) delay(20) }
             dispatch.applies.set(0)
             gateway.block = true
-            model.resumeSync(); model.applySync()
+            model.review.open(); model.review.apply()
             assertTrue(gateway.entered.await(10, TimeUnit.SECONDS))
             collector.cancel()
             store.clear() // The screen is closed: viewModelScope is cancelled mid-write.
             gateway.release.countDown()
             withTimeout(10_000) { while (dispatch.applies.get() == 0) delay(20) }
-            assertTrue(db.library().source(id)!!.syncState in LibraryRepository.BACKGROUND_SYNC_STATES)
+            assertTrue(db.library().source(id)!!.syncState.dueInBackground)
         } finally {
             gateway.release.countDown()
             db.close()

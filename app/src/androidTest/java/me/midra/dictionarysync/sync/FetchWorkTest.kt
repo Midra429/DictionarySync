@@ -12,10 +12,12 @@ import kotlinx.coroutines.runBlocking
 import me.midra.dictionarysync.data.local.*
 import me.midra.dictionarysync.data.parser.DictionaryProblem
 import me.midra.dictionarysync.data.source.*
-import me.midra.dictionarysync.library.LibraryRepository
+import me.midra.dictionarysync.AppContainer
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
+import me.midra.dictionarysync.NoDispatch
+import me.midra.dictionarysync.testApp
 
 /** Isolated business DBs and synthetic HTTP. Test WorkManager uses its own in-memory DB/delegate. */
 @RunWith(AndroidJUnit4::class)
@@ -27,15 +29,18 @@ class FetchWorkTest {
         override suspend fun enqueue() { if (fail) error("synthetic enqueue loss"); wakes++ }
         override suspend fun wakeAfter(delayMillis: Long) { if (fail) error("synthetic enqueue loss"); delay = delayMillis }
         override suspend fun cancelWake() { cancelled++ }
-        override suspend fun sources(sources: List<SourceEntity>) { automatic = sources.any { it.enabled && it.lifecycle == "ACTIVE" } }
+        override suspend fun sources(sources: List<SourceEntity>) { automatic = sources.any { it.enabled && it.lifecycle == SourceLifecycle.ACTIVE } }
     }
     private fun memory() = Room.inMemoryDatabaseBuilder(context, DictionaryDatabase::class.java).build()
-    private fun library(db: DictionaryDatabase, response: (String) -> String = { "よみ\tWorker合成語\t名詞" }) = LibraryRepository(context, db) { url, _, _ ->
+    private fun library(db: DictionaryDatabase, dispatch: FetchDispatch = NoDispatch, response: (String) -> String = { "よみ\tWorker合成語\t名詞" }) =
+        testApp(context, db, dispatch = dispatch) { url, _, _ ->
         val bytes = response(url).toByteArray(); Download(bytes, Downloader.sha256(bytes), url, "text/plain")
     }
-    private suspend fun source(db: DictionaryDatabase, id: String = "A", fetchedAt: Long? = null, lifecycle: String = "ACTIVE") {
+    private suspend fun source(db: DictionaryDatabase, id: String = "A", fetchedAt: Long? = null, lifecycle: SourceLifecycle = SourceLifecycle.ACTIVE) {
         db.library().addSource(SourceEntity(id, "合成$id", "https://example.org/$id", fetchedAt = fetchedAt, lifecycle = lifecycle))
     }
+    private fun runner(repo: AppContainer, now: () -> Long = System::currentTimeMillis) =
+        FetchRunner(repo.database, repo.fetcher, repo.requests, repo.applies, now)
     private fun worker(runner: FetchRunner, dispatch: Dispatch, attempts: Int = 0) = TestListenableWorkerBuilder<FetchWorker>(context)
         .setRunAttemptCount(attempts).setWorkerFactory(object : WorkerFactory() {
             override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters) =
@@ -45,14 +50,14 @@ class FetchWorkTest {
     @Test fun saveThenEnqueueFailureIsRepairedWithoutLosingTheGeneration() = runBlocking {
         val db = memory()
         try {
-            source(db); val repo = library(db); val dispatch = Dispatch(); val requests = FetchRequests(repo, dispatch)
+            source(db); val dispatch = Dispatch(); val repo = library(db, dispatch); val requests = repo.scheduler
             dispatch.fail = true
-            try { requests.one("A"); fail() } catch (_: IllegalStateException) { }
+            try { requests.requestOne("A"); fail() } catch (_: IllegalStateException) { }
             assertEquals(1L, db.requests().pending().single().generation)
             dispatch.fail = false; requests.repair()
             assertEquals(1, dispatch.wakes); assertEquals(1L, db.requests().pending().single().generation)
-            assertEquals(ListenableWorker.Result.success(), worker(FetchRunner(repo), dispatch).doWork())
-            assertEquals("FETCHED", db.requests().request("A")!!.outcome)
+            assertEquals(ListenableWorker.Result.success(), worker(runner(repo), dispatch).doWork())
+            assertEquals(FetchOutcome.FETCHED, db.requests().request("A")!!.outcome)
             assertTrue(db.sync().plans().isEmpty()); assertNull(db.library().source("A")!!.activeSnapshot)
         } finally { db.close() }
     }
@@ -63,12 +68,12 @@ class FetchWorkTest {
             source(db); var body = "<html>failed</html>"
             val repo = library(db) { body }; val dispatch = Dispatch()
             repo.requests.submit(listOf("A"), FetchReason.MANUAL)
-            assertEquals(ListenableWorker.Result.success(), worker(FetchRunner(repo), dispatch).doWork())
-            assertEquals("FETCH_FAILED", db.requests().request("A")!!.outcome)
+            assertEquals(ListenableWorker.Result.success(), worker(runner(repo), dispatch).doWork())
+            assertEquals(FetchOutcome.FETCH_FAILED, db.requests().request("A")!!.outcome)
             body = "# valid empty TSV"
             repo.requests.submit(listOf("A"), FetchReason.MANUAL)
-            assertEquals(ListenableWorker.Result.success(), worker(FetchRunner(repo), dispatch).doWork())
-            assertEquals("FETCHED", db.requests().request("A")!!.outcome)
+            assertEquals(ListenableWorker.Result.success(), worker(runner(repo), dispatch).doWork())
+            assertEquals(FetchOutcome.FETCHED, db.requests().request("A")!!.outcome)
             assertTrue(db.sync().plans().isEmpty()); assertTrue(db.sync().references().isEmpty())
         } finally { db.close() }
     }
@@ -80,17 +85,17 @@ class FetchWorkTest {
             val repo = library(db) { if (it.endsWith("/A")) throw DictionaryProblem("WIFI_WAIT") else "よみ\t成功語\t名詞" }
             val dispatch = Dispatch(); val now = System.currentTimeMillis()
             repo.requests.submit(listOf("A", "B"), FetchReason.ALL_SOURCES, now = now)
-            assertEquals(ListenableWorker.Result.success(), worker(FetchRunner(repo, { now }), dispatch).doWork())
+            assertEquals(ListenableWorker.Result.success(), worker(runner(repo) { now }, dispatch).doWork())
             assertEquals(1, dispatch.wakes)
             assertEquals(now + FetchRunner.WAIT_MILLIS, db.requests().request("A")!!.notBefore)
             assertEquals(0L, db.requests().request("A")!!.completedGeneration)
-            worker(FetchRunner(repo, { now }), dispatch).doWork()
-            assertEquals("FETCHED", db.requests().request("B")!!.outcome)
+            worker(runner(repo) { now }, dispatch).doWork()
+            assertEquals(FetchOutcome.FETCHED, db.requests().request("B")!!.outcome)
             assertEquals(FetchRunner.WAIT_MILLIS, dispatch.delay)
             val calls = db.library().snapshotIds("B").size
-            worker(FetchRunner(repo, { now }), dispatch).doWork()
+            worker(runner(repo) { now }, dispatch).doWork()
             assertEquals(calls, db.library().snapshotIds("B").size)
-            assertEquals("NETWORK_WAIT", db.library().source("A")!!.state)
+            assertEquals(FetchState.NETWORK_WAIT, db.library().source("A")!!.state)
         } finally { db.close() }
     }
 
@@ -100,12 +105,12 @@ class FetchWorkTest {
             source(db); val repo = library(db); val dispatch = Dispatch()
             repo.requests.submit(listOf("A"), FetchReason.MANUAL)
             db.openHelper.writableDatabase.execSQL("CREATE TRIGGER fail_worker BEFORE INSERT ON snapshots BEGIN SELECT RAISE(ABORT, 'synthetic storage failure'); END")
-            assertEquals(ListenableWorker.Result.retry(), worker(FetchRunner(repo), dispatch).doWork())
-            assertEquals(ListenableWorker.Result.failure(), worker(FetchRunner(repo), dispatch, 5).doWork())
+            assertEquals(ListenableWorker.Result.retry(), worker(runner(repo), dispatch).doWork())
+            assertEquals(ListenableWorker.Result.failure(), worker(runner(repo), dispatch, 5).doWork())
             assertEquals(0L, db.requests().pending().single().completedGeneration)
             assertTrue(db.library().snapshotIds("A").isEmpty())
             db.openHelper.writableDatabase.execSQL("DROP TRIGGER fail_worker")
-            worker(FetchRunner(repo), dispatch).doWork()
+            worker(runner(repo), dispatch).doWork()
             assertEquals(1L, db.requests().request("A")!!.completedGeneration)
         } finally { db.close() }
     }
@@ -115,7 +120,7 @@ class FetchWorkTest {
         try {
             source(db); val repo = library(db) { throw CancellationException("synthetic stop") }
             repo.requests.submit(listOf("A"), FetchReason.MANUAL)
-            try { worker(FetchRunner(repo), Dispatch()).doWork(); fail() } catch (_: CancellationException) { }
+            try { worker(runner(repo), Dispatch()).doWork(); fail() } catch (_: CancellationException) { }
             assertEquals(0L, db.requests().pending().single().completedGeneration)
             assertTrue(db.library().snapshotIds("A").isEmpty())
         } finally { db.close() }
@@ -126,11 +131,11 @@ class FetchWorkTest {
         try {
             val now = System.currentTimeMillis()
             source(db, "A"); source(db, "B", now - 1000); source(db, "C", now - FetchWork.DAY_MILLIS)
-            source(db, "D", lifecycle = "DELETE_PENDING")
+            source(db, "D", lifecycle = SourceLifecycle.DELETE_PENDING)
             val repo = library(db); val dispatch = Dispatch()
             suspend fun enable(id: String, value: Boolean) = db.library().updateSource(db.library().source(id)!!.copy(enabled = value))
             enable("A", false); enable("C", false)
-            val runner = PeriodicFetchRunner(repo, dispatch, { now })
+            val runner = PeriodicFetchRunner(repo.scheduler, repo.requests, dispatch, { now })
             runner.run(); assertTrue(db.requests().pending().isEmpty()); assertEquals(0, dispatch.wakes)
             enable("A", true); enable("C", true); runner.run()
             assertEquals(setOf("A", "C"), db.requests().pending().map { it.sourceId }.toSet())
@@ -145,7 +150,7 @@ class FetchWorkTest {
             source(db); var calls = 0; val now = System.currentTimeMillis()
             val repo = library(db) { calls++; "よみ\t合成語\t名詞" }; val dispatch = Dispatch()
             repo.requests.submit(listOf("A"), FetchReason.MANUAL, now + 123456, now)
-            worker(FetchRunner(repo, { now }), dispatch).doWork()
+            worker(runner(repo) { now }, dispatch).doWork()
             assertEquals(0, calls); assertEquals(123456L, dispatch.delay); assertEquals(0, dispatch.wakes)
             assertEquals(0L, db.requests().pending().single().completedGeneration)
         } finally { db.close() }

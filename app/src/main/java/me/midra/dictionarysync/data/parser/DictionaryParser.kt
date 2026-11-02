@@ -10,7 +10,8 @@ object DictionaryParser {
     // Bump whenever decoding, validation, or any parser semantics change.
     const val VALIDATION_VERSION = "dictionary-validation-v3"
     val formats = setOf("AUTO", "TSV", "MS_WORDLIST", "PLIST_XML", "APPLE_CSV")
-    private val encodings = setOf("UTF-8", "UTF-16LE", "UTF-16BE", "windows-31j")
+    /** Encodings a source may select (besides AUTO) and a generation may be decoded with. */
+    val ENCODINGS = setOf("UTF-8", "UTF-16LE", "UTF-16BE", "windows-31j")
     // ASCII headers that only these formats begin with, so a BOM-less UTF-16 file can be recognized by its bytes.
     private val utf16Signatures = listOf("!microsoft ime dictionary tool", "!!atok_tango_text_header", "!!dicut", "# gboard dictionary version:", "<?xml")
     // SKK markers are ASCII, so they are found before decoding even in EUC-JP, SKK's usual encoding.
@@ -77,7 +78,7 @@ object DictionaryParser {
         val http = Regex("charset\\s*=\\s*[\"']?([^;\\s\"']+)", RegexOption.IGNORE_CASE)
             .findAll(contentType.orEmpty()).map { canonical(it.groupValues[1]) }.toList()
         val manual = if (selected == "AUTO") null else canonical(selected)
-        if (manual != null && manual !in encodings) fail("UNSUPPORTED_ENCODING")
+        if (manual != null && manual !in ENCODINGS) fail("UNSUPPORTED_ENCODING")
         val signature = listOf("UTF-16LE", "UTF-16BE").firstOrNull { name ->
             val head = String(bytes, 0, minOf(bytes.size, 64), Charset.forName(name)).lowercase(java.util.Locale.ROOT)
             utf16Signatures.any { head.startsWith(it) }

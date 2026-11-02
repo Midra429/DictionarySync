@@ -21,6 +21,9 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import me.midra.dictionarysync.data.local.SyncState
+import me.midra.dictionarysync.save
+import me.midra.dictionarysync.testApp
 
 /** Real Activity/lifecycle, isolated application data, no network or Provider writes. */
 @RunWith(AndroidJUnit4::class)
@@ -34,14 +37,14 @@ class MainActivityAcceptanceTest {
         check(context.packageName == "me.midra.dictionarysync.acceptance") {
             "Run only with -PisolatedAcceptance=true; never touch the user's application database"
         }
-        val repo = LibraryRepository(context) { url, _, _ ->
+        val repo = testApp(context) { url, _, _ ->
             val bytes = "かいてん\t回転確認語\t名詞\nほか\t別の確認語\t名詞".toByteArray()
             Download(bytes, Downloader.sha256(bytes), url, "text/plain")
         }
-        val existing = repo.dao.sources().find { it.url == "https://example.org/activity-acceptance" }
-        sourceId = existing?.id ?: repo.save(null, sourceName, "https://example.org/activity-acceptance", "AUTO", "AUTO", "AUTO")
+        val existing = repo.database.library().sources().find { it.url == "https://example.org/activity-acceptance" }
+        sourceId = existing?.id ?: repo.editor.save(null, sourceName, "https://example.org/activity-acceptance", "AUTO", "AUTO", "AUTO")
         // A downloaded but disabled source exercises browsing without scheduling real HTTP/Provider work.
-        repo.dao.updateSource(repo.dao.source(sourceId)!!.copy(enabled = false, syncState = "REMOVED"))
+        repo.database.library().updateSource(repo.database.library().source(sourceId)!!.copy(enabled = false, syncState = SyncState.REMOVED))
         repo.preferences.setSetupDone(true)
     }
 
