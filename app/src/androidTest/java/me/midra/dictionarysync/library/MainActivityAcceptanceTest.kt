@@ -49,7 +49,7 @@ class MainActivityAcceptanceTest {
     }
 
     @Test fun formSurvivesActivityRecreationAndLandscape(): Unit = ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-        compose.onNodeWithContentDescription("ソースを追加").performClick()
+        compose.onNodeWithContentDescription("辞書を追加").performClick()
         compose.onNodeWithText("名前").performClick().performTextInput("回転中の入力")
         compose.onNodeWithText("辞書ファイルのURL").performScrollTo().performClick().performTextInput("https://example.org/draft?x=1&x=2")
         compose.onNode(hasText("6時間", substring = false) and isToggleable()).performScrollTo().performClick()
@@ -75,13 +75,13 @@ class MainActivityAcceptanceTest {
             .assertContentDescriptionEquals("$sourceName、無効")
             .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Switch)).assertIsOff()
         compose.onNodeWithText(sourceName).performClick()
-        compose.onNodeWithTag("entries-search").performScrollTo().performClick().performTextInput("回転")
+        compose.onNodeWithTag("entries-search").performClick().performTextInput("回転")
         waitForSearch()
         scenario.recreate()
-        compose.onNodeWithTag("entries-search").performScrollTo().assertTextContains("回転")
+        compose.onNodeWithTag("entries-search").assertTextContains("回転")
         waitForSearch()
         compose.onNodeWithContentDescription("戻る").performClick()
-        compose.onNodeWithText("選択", substring = false).performClick()
+        compose.onNodeWithContentDescription("選択").performClick()
         compose.onNodeWithTag("source-list").performScrollToNode(hasText(sourceName))
         compose.onNodeWithText(sourceName).performClick()
         scenario.recreate()

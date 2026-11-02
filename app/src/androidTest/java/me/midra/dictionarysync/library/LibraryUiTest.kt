@@ -56,7 +56,7 @@ class LibraryUiTest {
             val restoration = StateRestorationTester(compose)
             restoration.setContent { DictionarySyncTheme { DictionarySyncApp(model) {} } }
             compose.waitUntil(10000) { !model.operations.busy.value }
-            compose.onNodeWithContentDescription("ソースを追加").performClick()
+            compose.onNodeWithContentDescription("辞書を追加").performClick()
             compose.onNodeWithText("名前").performClick().performTextInput("取得中回転")
             compose.onNodeWithText("辞書ファイルのURL").performScrollTo().performClick().performTextInput("https://example.org/rotation")
             compose.onNodeWithText("追加", substring = false).performClick()
@@ -86,7 +86,7 @@ class LibraryUiTest {
             store.put("test", model)
             val restoration = StateRestorationTester(compose)
             restoration.setContent { DictionarySyncTheme { DictionarySyncApp(model) {} } }
-            compose.onNodeWithContentDescription("ソースを追加").performClick()
+            compose.onNodeWithContentDescription("辞書を追加").performClick()
             compose.onNodeWithText("名前").performClick().performTextInput("UI合成試験")
             compose.onNodeWithText("辞書ファイルのURL").performClick().performTextInput("https://example.org/ui?x=1&x=2")
             compose.onNodeWithText("形式: 自動 · 言語: 自動 · 文字コード: 自動").assertExists()
@@ -165,7 +165,7 @@ class LibraryUiTest {
             val restoration = StateRestorationTester(compose)
             restoration.setContent { DictionarySyncTheme { DictionarySyncApp(model) {} } }
             compose.waitUntil(10000) { model.sources.sources.value.size == 2 && !model.operations.busy.value }
-            compose.onNodeWithText("選択").performClick()
+            compose.onNodeWithContentDescription("選択").performClick()
             compose.onNodeWithText("選択A").performClick()
             compose.onNodeWithTag("source-enabled-$a").assertIsNotEnabled()
             compose.onNodeWithText("閲覧のみ", substring = true).assertDoesNotExist()
@@ -175,10 +175,10 @@ class LibraryUiTest {
             compose.onNodeWithText("無効化", substring = false).performClick()
             compose.waitUntil(10000) { !model.operations.busy.value && model.sources.notice.value != null }
             assertFalse(db.library().source(a)!!.enabled); assertFalse(db.library().source(b)!!.enabled)
-            compose.onNodeWithText("2件を受け付けました", substring = true).assertExists()
+            compose.onNodeWithText("2件を無効にしました", substring = true).assertExists()
             compose.onNodeWithText("すべて選択").performClick()
             compose.onNodeWithText("削除", substring = false).performClick()
-            compose.onNodeWithText("2件のソースを削除しますか？", substring = true).assertExists()
+            compose.onNodeWithText("2件の辞書を削除しますか？", substring = true).assertExists()
             compose.onAllNodesWithText("削除", substring = false, useUnmergedTree = true).onLast().performClick()
             compose.waitUntil(10000) { !model.operations.busy.value && model.sources.sources.value.isEmpty() }
             assertTrue(db.library().sources().isEmpty())
@@ -214,7 +214,7 @@ class LibraryUiTest {
             assertFalse(repo.database.library().source(a)!!.enabled); assertFalse(repo.database.library().source(b)!!.enabled)
             assertNotNull(repo.database.library().source(b)!!.syncError)
             assertTrue(repo.database.library().source(a)!!.syncState in setOf(SyncState.REMOVED, SyncState.SYNC_FAILED))
-            compose.onNodeWithText("2件を受け付けました", substring = true).assertExists()
+            compose.onNodeWithText("2件を無効にしました", substring = true).assertExists()
             assertEquals("外部編集", gateway.rows[row.id]!!.word)
         } finally { compose.runOnIdle { store.clear() }; db.close() }
     }
@@ -284,11 +284,11 @@ class LibraryUiTest {
             assertFalse(sync.synchronize(id))
             compose.waitUntil(10000) { model.review.pending.value?.plan?.state == PlanState.RECOVERY_REQUIRED }
             compose.onNodeWithText("確認する").performClick()
-            compose.onNodeWithText("関連ソースを再反映").assertDoesNotExist()
-            compose.onNodeWithTag("sync-all-differences").performScrollToNode(hasText("関連ソースをまとめて再反映する"))
-            compose.onNodeWithText("関連ソースをまとめて再反映する").performClick()
+            compose.onNodeWithText("関連する辞書を再反映").assertDoesNotExist()
+            compose.onNodeWithTag("sync-all-differences").performScrollToNode(hasText("関連する辞書をまとめて再反映する"))
+            compose.onNodeWithText("関連する辞書をまとめて再反映する").performClick()
             compose.waitUntil(10000) { !model.operations.busy.value && model.review.preview.value?.plan?.purpose == PlanPurpose.RESYNC }
-            compose.onNodeWithText("関連ソースを再反映").assertExists()
+            compose.onNodeWithText("関連する辞書を再反映").assertExists()
             compose.onNodeWithText("再反映を実行").performClick()
             compose.waitUntil(10000) { !model.operations.busy.value && model.review.pending.value == null }
             compose.onNodeWithText("確認する").assertDoesNotExist()
@@ -311,11 +311,11 @@ class LibraryUiTest {
             compose.setContent { DictionarySyncTheme { DictionarySyncApp(model, setup = true) { onBack ->
                 androidx.compose.material3.Button(onClick = { readiness = SyncReadiness.READY; onBack() }) { androidx.compose.material3.Text("診断を完了して戻る") }
             } } }
-            compose.onNodeWithText("ユーザー辞書への反映に必要です").assertExists()
+            compose.onNodeWithText("未実施です（ユーザー辞書への反映に必要）").assertExists()
             compose.onNodeWithText("対応診断を開く").performScrollTo().performClick()
             compose.onNodeWithText("診断を完了して戻る").performClick()
             compose.waitUntil(5000) { compose.onAllNodesWithText("完了しています").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("ユーザー辞書への反映に必要です").assertDoesNotExist()
+            compose.onNodeWithText("未実施です（ユーザー辞書への反映に必要）").assertDoesNotExist()
         } finally { store.clear(); db.close() }
     }
 }

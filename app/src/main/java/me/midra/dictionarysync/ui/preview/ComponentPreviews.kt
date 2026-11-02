@@ -7,7 +7,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import me.midra.dictionarysync.data.local.EntryEntity
 import me.midra.dictionarysync.data.local.SourceEntity
+import me.midra.dictionarysync.ui.entries.EntryRow
 import me.midra.dictionarysync.sync.SyncKey
 import me.midra.dictionarysync.sync.SyncPlan
 import me.midra.dictionarysync.sync.SyncPreview
@@ -113,4 +115,18 @@ private fun SetupPreview() = PreviewSurface {
 private fun DiagnosticsDonePreview() = PreviewSurface {
     DiagnosticsContent(ProbeUiState(marker = "dictionarysync_check_7e4c1c58", busy = false, imeEnabled = true, readConfirmed = true,
         certified = true, trialUnfinished = true, status = R.string.probe_trial_stopped, statusStep = 3), {}, {}, {}, {}, {}, {}, {})
+}
+
+@DictionaryPreviews
+@Composable
+private fun EntryRowsPreview() = PreviewSurface {
+    val entries = listOf(
+        EntryEntity("s", 1, "とうきょう", "東京", "地名", "コメント付きの行。長いコメントは3行までで省略します。", "ja-JP"),
+        EntryEntity("s", 2, "brb", "be right back", "", "", "en-GB"),
+        EntryEntity("s", 3, "", "complimarde", "", "", "fr-CA"),
+        EntryEntity("s", 4, "にこにこ", "ニコニコ", "名詞", "", "ALL"),
+    )
+    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
+        entries.forEachIndexed { index, entry -> EntryRow(entry, ListItemDefaults.segmentedShapes(index, entries.size), showLanguage = true) }
+    }
 }

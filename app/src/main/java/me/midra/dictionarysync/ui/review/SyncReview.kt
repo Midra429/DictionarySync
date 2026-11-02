@@ -13,8 +13,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import me.midra.dictionarysync.R
 import me.midra.dictionarysync.data.local.SourceEntity
 import me.midra.dictionarysync.sync.SyncKey
@@ -29,7 +27,7 @@ fun SyncReviewDialog(preview: SyncPreview, busy: Boolean, sources: List<SourceEn
     cancel: () -> Unit, apply: () -> Unit, recovery: (PlanPurpose) -> Unit) {
     // Saved outside the dialog window so the search survives recreation.
     val query = rememberSaveable(preview.plan.id) { mutableStateOf("") }
-    Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+    FullScreenDialog(onDismissRequest = close) {
         SyncReview(preview, busy, sources, close, cancel, apply, recovery, query)
     }
 }

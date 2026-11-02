@@ -160,7 +160,7 @@ class ProviderBatchUiAcceptanceTest {
             compose.waitUntil(10_000) { !model.operations.busy.value && model.sources.sources.value.size == 2 }
             select(ids, enter = true)
             compose.onNodeWithText("無効化", substring = false).performClick()
-            waitFor(model) { ids.all { db.library().source(it)!!.let { source -> !source.enabled && source.syncState == SyncState.REMOVED } } }
+            waitFor(model, "2件を無効にしました") { ids.all { db.library().source(it)!!.let { source -> !source.enabled && source.syncState == SyncState.REMOVED } } }
             assertTrue(gateway.find(key).isEmpty())
             assertEquals(witness, gateway.byId(witness.id))
             runBlocking {
@@ -172,16 +172,16 @@ class ProviderBatchUiAcceptanceTest {
             checkWholeProvider()
             select(ids, enter = false)
             compose.onNodeWithText("有効化", substring = false).performClick()
-            waitFor(model) { ids.all { db.library().source(it)!!.syncState == SyncState.SYNCED } }
+            waitFor(model, "2件を有効にしました") { ids.all { db.library().source(it)!!.syncState == SyncState.SYNCED } }
             assertApplied(db, gateway, witness, ids)
             assertEquals(2, gateway.inserts)
             checkWholeProvider()
             select(ids, enter = false)
             compose.onNodeWithText("削除", substring = false).performClick()
-            compose.onNodeWithText("2件のソースを削除しますか？").assertIsDisplayed()
+            compose.onNodeWithText("2件の辞書を削除しますか？").assertIsDisplayed()
             compose.onNode(hasText("削除", substring = false) and hasAnyAncestor(isDialog())).performClick()
-            waitFor(model) { ids.all { db.library().source(it)!!.lifecycle == SourceLifecycle.DELETED } }
-            compose.onNodeWithText("2件のソースを削除しますか？", substring = true).assertDoesNotExist()
+            waitFor(model, "2件の削除を開始しました") { ids.all { db.library().source(it)!!.lifecycle == SourceLifecycle.DELETED } }
+            compose.onNodeWithText("2件の辞書を削除しますか？", substring = true).assertDoesNotExist()
             assertTrue(gateway.find(key).isEmpty())
             assertEquals(witness, gateway.byId(witness.id))
             assertEquals(2, gateway.deletes)
@@ -209,7 +209,7 @@ class ProviderBatchUiAcceptanceTest {
     }
 
     private fun select(ids: List<String>, enter: Boolean) {
-        if (enter) compose.onNodeWithText("選択", substring = false).performClick()
+        if (enter) compose.onNodeWithContentDescription("選択").performClick()
         else compose.onAllNodes(hasText("選択を解除") and isEnabled()).fetchSemanticsNodes().firstOrNull()?.let { compose.onNodeWithText("選択を解除").performClick() }
         ids.forEachIndexed { index, id ->
             compose.onNodeWithTag("source-list").performScrollToNode(hasText(names[index]))
@@ -220,9 +220,9 @@ class ProviderBatchUiAcceptanceTest {
         compose.onNodeWithText("2件選択中").assertExists()
     }
 
-    private fun waitFor(model: AppViewModel, predicate: suspend () -> Boolean) {
+    private fun waitFor(model: AppViewModel, message: String, predicate: suspend () -> Boolean) {
         compose.waitUntil(20_000) { !model.operations.busy.value && runBlocking { predicate() } }
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("2件を受け付けました", substring = true).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) { compose.onAllNodesWithText(message, substring = true).fetchSemanticsNodes().isNotEmpty() }
         assertNull(model.operations.error.value)
         assertTrue(model.sources.selection.value.isEmpty())
     }

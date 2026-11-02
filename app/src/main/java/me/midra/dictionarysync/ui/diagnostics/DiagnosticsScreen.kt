@@ -23,6 +23,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -152,13 +153,14 @@ internal fun Step(number: Int, title: String, done: Boolean, content: @Composabl
     val progress by animateFloatAsState(if (done) 1f else 0f, MaterialTheme.motionScheme.defaultSpatialSpec(), label = "step")
     val morph = remember { Morph(MaterialShapes.Circle, MaterialShapes.Cookie9Sided) }
     val colors = MaterialTheme.colorScheme
-    ElevatedCard(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.extraLarge) {
+    // A tonal container like the list segments elsewhere, rather than a shadow: Expressive separates surfaces by tone.
+    Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.extraLarge, colors = CardDefaults.cardColors(containerColor = colors.surfaceContainer)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Box(Modifier.size(44.dp).background(if (done) colors.primary else colors.secondaryContainer, MorphShape(morph, progress)),
+                Box(Modifier.size(44.dp).background(if (done) colors.primary else colors.primaryContainer, MorphShape(morph, progress)),
                     contentAlignment = Alignment.Center) {
                     if (done) Icon(AppIcons.Check, contentDescription = stringResource(R.string.diag_done), tint = colors.onPrimary)
-                    else Text(number.toString(), style = MaterialTheme.typography.titleMediumEmphasized, color = colors.onSecondaryContainer)
+                    else Text(number.toString(), style = MaterialTheme.typography.titleMediumEmphasized, color = colors.onPrimaryContainer)
                 }
                 Text(title, style = MaterialTheme.typography.titleLargeEmphasized, modifier = Modifier.weight(1f).semantics { heading() })
             }
@@ -197,10 +199,14 @@ private fun Result(visible: Boolean, busy: Boolean, status: Int) {
         }
         visible -> {
             val ok = status in setOf(R.string.probe_read_confirmed, R.string.probe_trial_done)
-            Surface(color = toneColors(if (ok) Tone.Positive else Tone.Problem).container, shape = MaterialTheme.shapes.large) {
-                Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(toneIcon(if (ok) Tone.Positive else Tone.Problem), contentDescription = null)
-                    Text(stringResource(status), style = MaterialTheme.typography.bodyMedium)
+            val tone = toneColors(if (ok) Tone.Positive else Tone.Problem)
+            // The icon is one text line tall, so top alignment centers it on the first line and long results still wrap below it.
+            val style = MaterialTheme.typography.bodyMedium
+            val iconSize = with(LocalDensity.current) { style.lineHeight.toDp() }
+            Surface(color = tone.container, contentColor = tone.content, shape = MaterialTheme.shapes.large) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(toneIcon(if (ok) Tone.Positive else Tone.Problem), contentDescription = null, tint = tone.accent, modifier = Modifier.size(iconSize))
+                    Text(stringResource(status), style = style)
                 }
             }
         }

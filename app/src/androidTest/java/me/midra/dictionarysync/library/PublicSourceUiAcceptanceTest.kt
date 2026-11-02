@@ -51,7 +51,7 @@ class PublicSourceUiAcceptanceTest {
                 assertImeDisabled()
                 val prior = existing.singleOrNull { row -> row.url == url }
                 if (prior == null) {
-                    compose.onNodeWithContentDescription("ソースを追加").performClick()
+                    compose.onNodeWithContentDescription("辞書を追加").performClick()
                     compose.onNodeWithText("名前").performClick().performTextInput(names[index])
                     compose.onNodeWithText("辞書ファイルのURL").performScrollTo().performClick().performTextInput(url)
                     compose.onNode(hasText("24時間", substring = false) and isToggleable()).performScrollTo().assertIsOn()
@@ -86,7 +86,7 @@ class PublicSourceUiAcceptanceTest {
                 compose.onNodeWithText(names[index], useUnmergedTree = true).performScrollTo().performClick()
                 compose.onNodeWithText("${java.text.NumberFormat.getIntegerInstance().format(snapshot.count)}語 · 閲覧のみ").assertIsDisplayed()
                 val entry = runBlocking { db.library().entries(snapshot.id).first() }
-                compose.onNodeWithTag("entries-search").performScrollTo().performClick().performTextInput(entry.word)
+                compose.onNodeWithTag("entries-search").performClick().performTextInput(entry.word)
                 compose.waitUntil(10_000) {
                     compose.onAllNodes(hasText(entry.word, substring = false) and !hasSetTextAction()).fetchSemanticsNodes().isNotEmpty()
                 }
@@ -95,13 +95,13 @@ class PublicSourceUiAcceptanceTest {
             select(ids)
             compose.onNodeWithText("無効化", substring = false).performClick()
             waitFor(ids) { !it.enabled && it.syncState == SyncState.REMOVED }
-            compose.onNodeWithText("2件を受け付けました", substring = true).assertExists()
+            compose.onNodeWithText("2件を無効にしました", substring = true).assertExists()
             val snapshots = runBlocking { ids.map { db.library().source(it)!!.latestSnapshot } }
             select(ids, enter = false)
             compose.onNodeWithText("有効化", substring = false).performClick()
             waitFor(ids) { it.enabled && it.syncError == "IME_DISABLED" }
             // Accepted on screen; the apply Worker then reports the missing keyboard on each row.
-            compose.onNodeWithText("2件を受け付けました", substring = true).assertExists()
+            compose.onNodeWithText("2件を有効にしました", substring = true).assertExists()
             // Disabling again needs no Provider access for unapplied sources.
             select(ids)
             compose.onNodeWithText("無効化", substring = false).performClick()
@@ -109,10 +109,10 @@ class PublicSourceUiAcceptanceTest {
             assertEquals(snapshots, runBlocking { ids.map { db.library().source(it)!!.latestSnapshot } })
             select(ids, enter = false)
             compose.onNodeWithText("削除", substring = false).performClick()
-            compose.onNodeWithText("2件のソースを削除しますか？").assertIsDisplayed()
+            compose.onNodeWithText("2件の辞書を削除しますか？").assertIsDisplayed()
             compose.onNode(hasText("削除", substring = false) and hasAnyAncestor(isDialog())).performClick()
             waitFor(ids) { it.lifecycle == SourceLifecycle.DELETED }
-            compose.onNodeWithText("2件を受け付けました", substring = true).assertExists()
+            compose.onNodeWithText("2件の削除を開始しました", substring = true).assertExists()
         }
         assertImeDisabled()
         runBlocking {
@@ -125,7 +125,7 @@ class PublicSourceUiAcceptanceTest {
     }
 
     private fun select(ids: List<String>, enter: Boolean = true) {
-        if (enter) compose.onNodeWithText("選択", substring = false).performClick()
+        if (enter) compose.onNodeWithContentDescription("選択").performClick()
         else compose.onAllNodes(hasText("選択を解除") and isEnabled()).fetchSemanticsNodes().firstOrNull()?.let { compose.onNodeWithText("選択を解除").performClick() }
         ids.forEachIndexed { index, id ->
             compose.onNodeWithTag("source-list").performScrollToNode(hasText(names[index]))
