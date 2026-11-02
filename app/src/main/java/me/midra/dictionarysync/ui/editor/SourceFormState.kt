@@ -30,10 +30,13 @@ class SourceFormState(private val saved: SavedStateHandle, private val app: AppC
     private var job: Job? = null
 
     fun edit(id: String?) { saved[EDITING] = id; saved[OPEN] = true }
-    fun dismiss() { saved[OPEN] = false }
+    /** Form errors are shown inline in the form, so they must not outlive it and resurface as a dialog. */
+    fun dismiss() { saved[OPEN] = false; operations.dismissError() }
 
     /** Saves [draft] unless another operation runs; a repeated tap never replaces the running save's [job]. */
     fun save(draft: SourceDraft) { operations.run {
+        // A new attempt supersedes the previous attempt's error.
+        operations.dismissError()
         try {
             fetching.value = true
             val url = SourceRules.url(draft.url).toString()

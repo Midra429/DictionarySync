@@ -240,6 +240,28 @@ class LibraryUiTest {
         } finally { compose.runOnIdle { store.clear() }; db.close() }
     }
 
+    @Test fun failedAddErrorDoesNotSurviveLaterSuccessfulAdd(): Unit = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(context, DictionaryDatabase::class.java).build()
+        val store = ViewModelStore()
+        try {
+            val repo = testApp(context, db, dispatch = Dispatch()) { url, _, _ ->
+                if (url.toString().endsWith("/missing")) throw me.midra.dictionarysync.data.parser.DictionaryProblem("HTTP_404")
+                val bytes = "よみ\t再試行語\t名詞".toByteArray()
+                Download(bytes, Downloader.sha256(bytes), url, "text/plain")
+            }
+            val model = AppViewModel(context.applicationContext as Application, SavedStateHandle(), repo)
+            store.put("test", model)
+            compose.setContent { DictionarySyncTheme { DictionarySyncApp(model) {} } }
+            compose.waitUntil(10000) { !model.operations.busy.value }
+            compose.runOnIdle { model.form.edit(null); model.form.save(SourceDraft("再試行", "https://example.org/missing")) }
+            compose.waitUntil(10000) { !model.operations.busy.value && model.operations.error.value != null }
+            assertTrue(model.form.open.value)
+            compose.runOnIdle { model.form.save(SourceDraft("再試行", "https://example.org/found")) }
+            compose.waitUntil(10000) { !model.operations.busy.value && !model.form.open.value }
+            assertNull(model.operations.error.value)
+            assertEquals(1, repo.database.library().sources().size)
+        } finally { compose.runOnIdle { store.clear() }; db.close() }
+    }
     @Test fun backgroundFailureAndRecoveryUpdateOpenScreenWithoutRestart(): Unit = runBlocking {
         val db = Room.inMemoryDatabaseBuilder(context, DictionaryDatabase::class.java).build()
         val store = ViewModelStore()
