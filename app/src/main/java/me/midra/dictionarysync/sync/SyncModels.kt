@@ -146,6 +146,8 @@ interface SyncStore {
     suspend fun plans(): List<SyncPlan>
     suspend fun planKeys(id: String): List<PlanKey>
     suspend fun operations(id: String): List<SyncOperation>
+    /** Those of [rowIds] that an insert of this app returned, in any plan; the journal is never pruned. */
+    suspend fun insertedRows(rowIds: Collection<Long>): Set<Long>
     suspend fun prepare(plan: SyncPlan, keys: List<SyncKey>, planKeys: List<PlanKey>)
     suspend fun plan(plan: SyncPlan)
     suspend fun binding(binding: ProviderBinding)
@@ -180,6 +182,8 @@ interface SyncGateway {
     fun byIds(ids: Collection<Long>): Map<Long, ProbeRow> = ids.distinct().mapNotNull(::byId).associateBy { it.id }
     fun insert(value: ProbeValue): Long?
     fun delete(row: ProbeRow): Int
+    /** A row [checkAccess] depends on (the diagnostic witness). It is never deleted, even as an existing match. */
+    fun reserved(row: ProbeRow): Boolean = false
 }
 /** A sync stopped for a reason the user can act on; [code] is shown as detail and grouped by the UI. */
 class SyncStopped(val code: String) : IllegalStateException(code) {
@@ -192,5 +196,5 @@ class SyncStopped(val code: String) : IllegalStateException(code) {
 enum class SyncReadiness { READY, IME_DISABLED, DIAGNOSIS_REQUIRED, PROBE_UNFINISHED, UNSUPPORTED }
 
 data class SyncPreview(val plan: SyncPlan, val additions: List<SyncKey>, val removed: List<SyncKey>,
-    val ownedDeletes: List<SyncKey>, val protected: Int, val shared: Int, val desiredCount: Int,
+    val deletes: List<SyncKey>, val protected: Int, val shared: Int, val desiredCount: Int,
     val relatedSources: List<String> = emptyList(), val blockers: List<String> = emptyList())

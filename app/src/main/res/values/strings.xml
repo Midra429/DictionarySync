@@ -114,7 +114,7 @@
     <string name="action_disable">無効化</string>
     <string name="action_delete">削除</string>
     <string name="delete_title">%1$d件の辞書を削除しますか？</string>
-    <string name="delete_body">この辞書が追加した単語をユーザー辞書から削除します。手動で登録した単語や、ほかの辞書と共通の単語は残ります。</string>
+    <string name="delete_body">この辞書の単語を、前から登録されていた同じ単語も含めてユーザー辞書から削除します。ほかの辞書と共通の単語や、追加後に編集された単語は残ります。</string>
 
     <!-- 追加・編集 -->
     <string name="editor_add_title">辞書を追加</string>
@@ -186,11 +186,11 @@
     <string name="review_open_compensate">今回の反映を取り消して元に戻す</string>
     <string name="review_resync_detail">関連する辞書の単語を照合し直します。端末側で編集された単語は残します。</string>
     <string name="review_compensate_detail">今回追加した単語を取り消し、削除した単語を戻します。編集された単語や確認できない単語は残します。</string>
-    <string name="review_remove_detail">途中まで追加した単語を削除してから、辞書を削除します。手動で登録した単語や、ほかの辞書と共通の単語は残します。</string>
+    <string name="review_remove_detail">この辞書の単語を、前から登録されていた同じ単語も含めて削除してから、辞書を削除します。ほかの辞書と共通の単語や、編集された単語は残します。</string>
     <string name="review_related">まとめて処理する辞書: %1$s</string>
     <string name="review_blockers">未解決: %1$s</string>
     <string name="review_blockers_detail">確認できる範囲だけを処理します。</string>
-    <string name="review_safety">既存の単語は上書きしません。削除するのは、このアプリが追加して変更されていない単語だけです。</string>
+    <string name="review_safety">既存の単語は上書きしません。削除するのは、このアプリが追加して変更されていない単語と、無効化・削除する辞書と同じ内容の既存の単語だけです。</string>
     <string name="review_ime_note">変換候補に出るかはキーボードによります。</string>
     <string name="review_apply_apply">続きを反映</string>
     <string name="review_apply_resync">再反映を実行</string>

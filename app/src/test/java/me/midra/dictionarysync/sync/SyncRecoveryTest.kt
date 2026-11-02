@@ -39,7 +39,7 @@ class SyncRecoveryTest {
         val journal = f.store.operations(p.plan.id)
         val r = f.recovery(p, PlanPurpose.REMOVE_SOURCE)
         assertEquals(0, r.desiredCount)
-        assertEquals(listOf(a), r.ownedDeletes)
+        assertEquals(listOf(a), r.deletes)
         f.apply(r)
         assertEquals(setOf(shared, manual, unknown), f.gateway.rows.values.toSet())
         assertEquals("B", f.store.refs.single().sourceId)
@@ -50,6 +50,17 @@ class SyncRecoveryTest {
         f.engine().apply(r.plan.id)
         assertEquals(1, f.gateway.deletes)
         f.apply(f.plan("C", listOf(SyncKey.of("ja", "次のソース", "つぎ"))))
+    }
+    @Test fun sourceRemovalAfterFailedUpdateDeletesItsExistingMatches() = runBlocking {
+        val f = Fixture()
+        val existing = a.value().row(2).copy(frequency = 210); f.gateway.rows[2] = existing
+        f.apply(f.plan(keys = listOf(a)))
+        assertEquals(Ownership.BORROWED, f.store.bindings.getValue(a.id).ownership)
+        val p = f.failedCommit(listOf(a, b))
+        val r = f.recovery(p, PlanPurpose.REMOVE_SOURCE)
+        assertEquals(setOf(a, b), r.deletes.toSet())
+        f.apply(r)
+        assertTrue(f.gateway.rows.isEmpty()); assertTrue(f.store.refs.isEmpty()); assertEquals(2, f.gateway.deletes)
     }
     @Test fun sourceRemovalDoesNotRestoreOldWordsDeletedByFailedUpdate() = runBlocking {
         val f = Fixture(); f.apply(f.plan(keys = listOf(a)))

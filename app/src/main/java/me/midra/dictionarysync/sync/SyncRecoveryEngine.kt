@@ -204,7 +204,7 @@ internal class SyncRecoveryEngine(private val store: SyncStore, private val gate
         val wanted = keys.filter { it.desired }.map { all.getValue(it.keyId) }
         val removed = keys.filter { !it.desired }.map { all.getValue(it.keyId) }
         return SyncPreview(plan, wanted.filter { SyncEngine.needsInsert(bindings[it.id]) || it.id in context.reset }, removed,
-            removed.filter { bindings[it.id]?.ownership == Ownership.OWNED && it.id !in context.blocked },
+            removed.filter { bindings[it.id]?.ownership in SyncEngine.deletable(plan) && it.id !in context.blocked },
             context.reset.size + context.blocked.size, 0, wanted.size, context.sources.map { it.id }, context.blocked.values.distinct().sorted())
     }
 
@@ -246,6 +246,7 @@ internal class SyncRecoveryEngine(private val store: SyncStore, private val gate
             engine.audit(desired, plan)
             store.plan(plan.copy(state = PlanState.REMOVING, error = null))
             val removalOperations = store.operations(plan.id).associateBy { it.keyId }
+            val deletable = SyncEngine.deletable(plan)
             for (chunk in removed.chunked(BATCH)) {
                 engine.boundary(plan)
                 engine.reconcile(chunk.mapNotNull { removalOperations[it.id] }, all, plan)
@@ -253,8 +254,9 @@ internal class SyncRecoveryEngine(private val store: SyncStore, private val gate
                 val bindings = store.bindings(rest.map { it.id }).associateBy { it.keyId }
                 val bound = rest.filter { it.id in bindings }
                 engine.audit(bound, plan)
-                // Only known, unchanged OWNED rows that no target source still needs are removed.
-                engine.delete(bound.filter { bindings.getValue(it.id).ownership == Ownership.OWNED }.map { it to bindings.getValue(it.id) }, plan)
+                // Only known, unchanged OWNED rows (and, removing the source, its existing matches) that no target source
+                // still needs are removed.
+                engine.delete(engine.current(bound.filter { bindings.getValue(it.id).ownership in deletable }.map { it to bindings.getValue(it.id) }, plan), plan)
             }
             engine.boundary(plan)
             engine.audit(desired, plan)

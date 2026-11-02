@@ -45,7 +45,7 @@ internal fun SyncReview(preview: SyncPreview, busy: Boolean, sources: List<Sourc
     var query by queryState
     val additions = remember(preview, query) { preview.additions.filter { query in it.word || query in it.shortcut.orEmpty() } }
     val removed = remember(preview, query) { preview.removed.filter { query in it.word || query in it.shortcut.orEmpty() } }
-    val deletes = remember(preview) { preview.ownedDeletes.map { it.id }.toSet() }
+    val deletes = remember(preview) { preview.deletes.map { it.id }.toSet() }
     val blocked = purpose == PlanPurpose.RESYNC && preview.blockers.isNotEmpty()
     Scaffold(
         topBar = {
@@ -85,7 +85,7 @@ internal fun SyncReview(preview: SyncPreview, busy: Boolean, sources: List<Sourc
                     Stat(R.string.review_stat_desired, preview.desiredCount)
                     Stat(R.string.review_stat_add, preview.additions.size)
                     Stat(R.string.review_stat_release, preview.removed.size)
-                    Stat(R.string.review_stat_delete, preview.ownedDeletes.size)
+                    Stat(R.string.review_stat_delete, preview.deletes.size)
                     if (purpose == PlanPurpose.APPLY) Stat(R.string.review_stat_shared, preview.shared)
                     Stat(R.string.review_stat_protected, preview.protected)
                 }

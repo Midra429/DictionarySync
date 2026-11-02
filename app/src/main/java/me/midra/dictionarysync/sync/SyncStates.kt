@@ -54,9 +54,9 @@ enum class PlanPurpose {
 
 /** How the app relates to the Provider row of a key. */
 enum class Ownership {
-    /** Inserted by this installation and read back unchanged; the only rows the app ever deletes. */
+    /** Inserted by this installation and read back unchanged. */
     OWNED,
-    /** An existing matching row the app reuses but never modifies. */
+    /** An existing matching row the app reuses but never modifies; deleted only when its source is disabled or deleted. */
     BORROWED,
     /** No longer held: deleted by the app, released by every source, or edited externally. */
     RELEASED,
