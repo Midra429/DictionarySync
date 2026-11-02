@@ -41,6 +41,8 @@ Google Material Symbols Rounded（Apache License 2.0）を使用する。Android
 - [Material Symbols](https://developers.google.com/fonts/docs/material_symbols)
 - [format_list_bulleted](https://github.com/google/material-design-icons/blob/master/symbols/web/format_list_bulleted/materialsymbolsrounded/format_list_bulleted_24px.svg)
 - [settings](https://github.com/google/material-design-icons/blob/master/symbols/web/settings/materialsymbolsrounded/settings_24px.svg)
+- [settings（塗りつぶし）](https://github.com/google/material-design-icons/blob/master/symbols/web/settings/materialsymbolsrounded/settings_fill1_24px.svg)
+- [dictionary（枠線）](https://github.com/google/material-design-icons/blob/master/symbols/web/dictionary/materialsymbolsrounded/dictionary_24px.svg)
 - [dictionary](https://github.com/google/material-design-icons/blob/master/symbols/web/dictionary/materialsymbolsrounded/dictionary_fill1_24px.svg)
 - [autorenew](https://github.com/google/material-design-icons/blob/master/symbols/web/autorenew/materialsymbolsrounded/autorenew_fill1_24px.svg)
 - [同梱ライセンス本文](../app/src/main/assets/licenses/apache-2.0.txt)
