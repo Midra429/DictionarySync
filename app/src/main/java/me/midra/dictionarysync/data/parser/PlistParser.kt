@@ -76,9 +76,9 @@ internal object PlistParser {
         return result
     }
 
-    fun parse(text: String, encoding: String): ParsedDictionary {
+    fun parse(text: String, encoding: String, maxEntries: Long): ParsedDictionary {
         val safe = withoutDtd(text)
-        val handler = Handler()
+        val handler = Handler(maxEntries)
         val reader = SAXParserFactory.newInstance().apply { isNamespaceAware = true; isValidating = false }.newSAXParser().xmlReader
         reader.contentHandler = handler
         reader.errorHandler = handler
@@ -92,11 +92,10 @@ internal object PlistParser {
             fail("XML_INVALID", (error as? SAXParseException)?.lineNumber)
         }
         if (!handler.complete) fail("XML_STRUCTURE")
-        val lines = text.split(Regex("\r\n|\n|\r"))
-        return ParsedDictionary(handler.entries, lines.size - if (lines.last().isEmpty()) 1 else 0, PARSER, encoding)
+        return ParsedDictionary(handler.entries, TsvParser.physicalLines(text), PARSER, encoding)
     }
 
-    private class Handler : DefaultHandler() {
+    private class Handler(private val maxEntries: Long) : DefaultHandler() {
         val entries = ArrayList<ParsedEntry>()
         var complete = false
         private var locator: Locator? = null
@@ -169,7 +168,7 @@ internal object PlistParser {
                     if (word.isBlank()) stop("EMPTY_WORD")
                     // XML can contain multiple dicts on one physical line. Room's row identity must stay unique.
                     entries += ParsedEntry(entries.size + 1, fields.getValue("shortcut"), word, "", "")
-                    if (entries.size > TsvParser.MAX_ENTRIES) stop("ENTRY_LIMIT")
+                    if (entries.size > maxEntries) stop("ENTRY_LIMIT")
                 }
                 "plist" -> { if (!arraySeen) stop("XML_STRUCTURE"); complete = true }
             }

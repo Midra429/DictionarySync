@@ -54,6 +54,8 @@ android {
     }
     sourceSets.getByName("test").kotlin.srcDir("src/sharedTest/java")
     sourceSets.getByName("androidTest").kotlin.srcDir("src/sharedTest/java")
+    // Limits follow the heap (MemoryBudget); Gradle's 512 MiB default is too small for the size tests to run.
+    testOptions.unitTests.all { it.maxHeapSize = "1g" }
     buildFeatures {
         compose = true
     }

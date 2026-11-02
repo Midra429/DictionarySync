@@ -73,7 +73,7 @@ fun sourceStatus(source: SourceEntity, request: PendingRequest?, now: Long): Sou
 /** Short, user-facing groups of internal error codes. The raw code stays available as detail. */
 enum class Reason {
     Diagnosis, ImeDisabled, PlanFirst, Refetch, External, Unknown, DeleteFailed, Stale, Incomplete,
-    Wifi, Network, ServerWait, CsvManual, Columns, Unsupported, Format, Encoding, Size, Http, Url, Duplicate, Name, Locale, Empty, SourceLimit, Generic,
+    Wifi, Network, ServerWait, CsvManual, Columns, Unsupported, Format, Encoding, Size, Http, Url, Duplicate, Name, Locale, Empty, Generic,
 }
 
 fun reasonOf(code: String): Reason = when {
@@ -93,10 +93,10 @@ fun reasonOf(code: String): Reason = when {
     code.startsWith("TSV_COLUMNS") || code.startsWith("CSV_") -> Reason.Columns
     code.substringBefore(' ') in setOf("SKK_UNSUPPORTED", "RIME_UNSUPPORTED", "YAML_UNSUPPORTED", "ATOK_DICUT_UNSUPPORTED",
         "ATOK_AUTO_REPLACE_UNSUPPORTED", "GBOARD_VERSION_UNSUPPORTED", "GBOARD_FORMAT_UNSUPPORTED") -> Reason.Unsupported
-    code.startsWith("SIZE_LIMIT") -> Reason.Size
+    code.substringBefore(' ') in setOf("SIZE_LIMIT", "ENTRY_LIMIT", "KEY_LIMIT", "QUERY_LIMIT") -> Reason.Size
     code.startsWith("HTTP_") && code.removePrefix("HTTP_").takeWhile(Char::isDigit).isNotEmpty() -> Reason.Http
     code.startsWith("XML_") || code.substringBefore(' ') in setOf("NOT_DICTIONARY", "NOT_TSV", "UNSUPPORTED_BINARY", "FORMAT_CONFLICT",
-        "MIME_FORMAT_CONFLICT", "MS_HEADER_REQUIRED", "MS_FORMAT_REQUIRED", "ENTRY_LIMIT", "FIELD_LIMIT", "RECORD_LIMIT",
+        "MIME_FORMAT_CONFLICT", "MS_HEADER_REQUIRED", "MS_FORMAT_REQUIRED", "FIELD_LIMIT", "RECORD_LIMIT",
         "CONTROL_CHARACTER", "INVALID_UNICODE", "EMPTY_WORD", "UNSUPPORTED_FORMAT", "GBOARD_FORMAT_REQUIRED", "GBOARD_LANGUAGE_TAG") -> Reason.Format
     code.contains("ENCODING") || code.startsWith("DECODE_FAILED") || code.startsWith("UTF32") -> Reason.Encoding
     code == "DUPLICATE_URL" -> Reason.Duplicate
@@ -104,7 +104,6 @@ fun reasonOf(code: String): Reason = when {
     code == "INVALID_NAME" -> Reason.Name
     code == "INVALID_LOCALE" -> Reason.Locale
     code.startsWith("EMPTY_BODY") || code.startsWith("AMBIGUOUS_EMPTY") -> Reason.Empty
-    code == "SOURCE_LIMIT" -> Reason.SourceLimit
     else -> Reason.Generic
 }
 

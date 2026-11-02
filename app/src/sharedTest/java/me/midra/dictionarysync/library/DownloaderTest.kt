@@ -54,6 +54,31 @@ class DownloaderTest {
             assertTrue(response.disconnected)
         }
     }
+    @Test fun declaredLengthIsReadExactlyAndAShorterOrLongerBodyFails() {
+        val body = "r\tw\tp".toByteArray()
+        fun get(length: Int) = Downloader().get("https://example.org/d", Route(listOf(Response(body = body, headers = mapOf("Content-Length" to "$length")))))
+        assertArrayEquals(body, get(body.size).bytes)
+        assertEquals("INCOMPLETE_RESPONSE", assertThrows(DictionaryProblem::class.java) { get(body.size + 1) }.code)
+        assertEquals("INCOMPLETE_RESPONSE", assertThrows(DictionaryProblem::class.java) { get(body.size - 1) }.code)
+    }
+    @Test fun sizeLimitFollowsTheBudgetForDeclaredUndeclaredAndDecompressedBodies() {
+        val body = "r\tw\tp\n".repeat(100).toByteArray()
+        fun get(limit: Long, headers: Map<String, String> = emptyMap(), bytes: ByteArray = body) =
+            Downloader(maxBytes = { limit }).get("https://example.org/d", Route(listOf(Response(body = bytes, headers = headers))))
+        val declared = mapOf("Content-Length" to "${body.size}")
+        assertEquals(body.size, get(body.size.toLong(), declared).bytes.size)
+        assertEquals(body.size, get(body.size.toLong()).bytes.size)
+        for (headers in listOf(declared, emptyMap())) {
+            assertEquals("SIZE_LIMIT", assertThrows(DictionaryProblem::class.java) { get(body.size - 1L, headers) }.code)
+        }
+        val output = ByteArrayOutputStream()
+        GZIPOutputStream(output).use { it.write(body) }
+        val compressed = output.toByteArray()
+        assertTrue(compressed.size < body.size - 1)
+        assertEquals("SIZE_LIMIT", assertThrows(DictionaryProblem::class.java) {
+            get(body.size - 1L, mapOf("Content-Encoding" to "gzip", "Content-Length" to "${compressed.size}"), compressed)
+        }.code)
+    }
     @Test fun validGzipDecodesAndCorruptGzipFails() {
         val output = ByteArrayOutputStream()
         GZIPOutputStream(output).use { it.write("r\tw\tp".toByteArray()) }

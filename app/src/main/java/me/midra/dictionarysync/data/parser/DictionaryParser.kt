@@ -1,9 +1,11 @@
 package me.midra.dictionarysync.data.parser
 
 import java.nio.ByteBuffer
+import java.nio.CharBuffer
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
 import me.midra.dictionarysync.data.parser.TsvParser.fail
+import me.midra.dictionarysync.data.source.MemoryBudget
 
 /** One strict decoding and validation boundary for every supported dictionary format. */
 object DictionaryParser {
@@ -15,12 +17,15 @@ object DictionaryParser {
     // ASCII headers that only these formats begin with, so a BOM-less UTF-16 file can be recognized by its bytes.
     private val utf16Signatures = listOf("!microsoft ime dictionary tool", "!!atok_tango_text_header", "!!dicut", "# gboard dictionary version:", "<?xml")
     // SKK markers are ASCII, so they are found before decoding even in EUC-JP, SKK's usual encoding.
-    private val skk = Regex("(?m)^;; okuri-(ari|nasi) entries\\.")
+    private val skkMarkers = listOf(";; okuri-ari entries.", ";; okuri-nasi entries.").map { it.toByteArray(Charsets.US_ASCII) }
 
-    fun parse(bytes: ByteArray, encoding: String = "AUTO", format: String = "AUTO", contentType: String? = null): ParsedDictionary {
+    /** [budget] sizes the body and entry limits to the heap; see [MemoryBudget]. */
+    fun parse(bytes: ByteArray, encoding: String = "AUTO", format: String = "AUTO", contentType: String? = null,
+        budget: MemoryBudget = MemoryBudget()): ParsedDictionary {
         if (format !in formats) fail("UNSUPPORTED_FORMAT")
         if (bytes.isEmpty()) fail("EMPTY_BODY")
-        if (bytes.size > TsvParser.MAX_BYTES) fail("SIZE_LIMIT")
+        if (bytes.size > budget.maxBytes) fail("SIZE_LIMIT")
+        val maxEntries = budget.maxEntries(bytes.size.toLong())
         val mime = contentType?.substringBefore(';')?.trim()?.lowercase(java.util.Locale.ROOT)
         if (mime in setOf("text/html", "application/xhtml+xml", "application/json") || mime?.endsWith("+json") == true) fail("NOT_DICTIONARY")
         // ZIP, gzip, xz, bzip2, 7z, zstd, tar and binary plist. Archives are never unpacked.
@@ -28,21 +33,21 @@ object DictionaryParser {
             bytes.starts(0xfd, 0x37, 0x7a, 0x58, 0x5a, 0) || bytes.starts(0x42, 0x5a, 0x68) || bytes.starts(0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c) ||
             bytes.starts(0x28, 0xb5, 0x2f, 0xfd) || bytes.size > 262 && String(bytes, 257, 5, Charsets.ISO_8859_1) == "ustar" ||
             bytes.take(6).toByteArray().contentEquals("bplist".toByteArray())) fail("UNSUPPORTED_BINARY")
-        if (skk.containsMatchIn(String(bytes, Charsets.ISO_8859_1))) fail("SKK_UNSUPPORTED")
+        if (skk(bytes)) fail("SKK_UNSUPPORTED")
         val (text, usedEncoding) = decode(bytes, encoding, contentType)
         val head = text.trimStart().take(256).lowercase(java.util.Locale.ROOT)
         if (head.startsWith("<!doctype html") || head.startsWith("<html") || head.startsWith("{") || head.startsWith("[")) fail("NOT_DICTIONARY")
         val xml = text.trimStart().startsWith('<')
         if (!xml) yaml(text)
         val result = when {
-            format == "PLIST_XML" || (format == "AUTO" && xml) -> PlistParser.parse(text, usedEncoding)
-            format == "APPLE_CSV" -> AppleCsvParser.parse(text, usedEncoding)
+            format == "PLIST_XML" || (format == "AUTO" && xml) -> PlistParser.parse(text, usedEncoding, maxEntries)
+            format == "APPLE_CSV" -> AppleCsvParser.parse(text, usedEncoding, maxEntries)
             xml -> fail("FORMAT_CONFLICT")
             format == "AUTO" && !text.contains('\t') && text.contains(',') -> {
-                AppleCsvParser.parse(text, usedEncoding, skipShort = false) // Validate the entire candidate before suggesting it.
+                AppleCsvParser.parse(text, usedEncoding, maxEntries, skipShort = false) // Validate the entire candidate before suggesting it.
                 fail("CSV_MANUAL_REQUIRED")
             }
-            else -> TsvParser.parseText(text, usedEncoding, format)
+            else -> TsvParser.parseText(text, usedEncoding, format, maxEntries)
         }
         if ((mime in setOf("application/xml", "text/xml", "application/x-plist") || mime?.endsWith("+xml") == true) && result.parser != PlistParser.PARSER) fail("MIME_FORMAT_CONFLICT")
         if (mime == "text/csv" && result.parser != AppleCsvParser.PARSER) fail("MIME_FORMAT_CONFLICT")
@@ -57,6 +62,18 @@ object DictionaryParser {
         val lines = text.lineSequence().map { it.trimEnd() }
         if (lines.firstOrNull { it.isNotEmpty() && !it.startsWith('#') } != "---") return
         fail(if (lines.any { it == "..." }) "RIME_UNSUPPORTED" else "YAML_UNSUPPORTED")
+    }
+
+    /**
+     * Whether a line starts with an SKK marker, read from the bytes as ISO-8859-1 the way `(?m)^` reads lines: after
+     * LF, CR or NEL (0x85). Scanning the bytes avoids a second, decoded copy of the whole body.
+     */
+    private fun skk(bytes: ByteArray): Boolean {
+        for (i in bytes.indices) {
+            if (i > 0) { val before = bytes[i - 1].toInt() and 255; if (before != 0x0a && before != 0x0d && before != 0x85) continue }
+            if (skkMarkers.any { marker -> i + marker.size <= bytes.size && marker.indices.all { bytes[i + it] == marker[it] } }) return true
+        }
+        return false
     }
 
     private fun ByteArray.starts(vararg values: Int) = size >= values.size && values.indices.all { this[it].toInt() and 255 == values[it] }
@@ -86,9 +103,25 @@ object DictionaryParser {
         val chosen = manual ?: bom?.first ?: signature ?: "UTF-8"
         if (bom != null && bom.first != chosen || signature != null && signature != chosen || http.any { !agrees(it, chosen) }) fail("ENCODING_CONFLICT")
         val offset = bom?.second ?: 0
-        val decoder = Charset.forName(chosen).newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
-        val text = try { decoder.decode(ByteBuffer.wrap(bytes, offset, bytes.size - offset)).toString() }
-        catch (_: java.nio.charset.CharacterCodingException) { fail("DECODE_FAILED") }
+        val charset = Charset.forName(chosen)
+        // Strictly validated through a small buffer, then decoded once into the String: decoding into a CharBuffer and
+        // copying it to a String would hold the text twice. Valid input decodes identically either way.
+        val decoder = charset.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
+        val input = ByteBuffer.wrap(bytes, offset, bytes.size - offset)
+        val output = CharBuffer.allocate(8192)
+        while (true) {
+            val result = decoder.decode(input, output, true)
+            if (result.isError) fail("DECODE_FAILED")
+            output.clear()
+            if (result.isUnderflow) break
+        }
+        while (true) {
+            val result = decoder.flush(output)
+            if (result.isError) fail("DECODE_FAILED")
+            output.clear()
+            if (result.isUnderflow) break
+        }
+        val text = String(bytes, offset, bytes.size - offset, charset)
         // A Reader is used for XML, so declarations must be checked here, before SAX can ignore them.
         if (text.startsWith("<?xml")) {
             val declaration = text.substringBefore("?>")
