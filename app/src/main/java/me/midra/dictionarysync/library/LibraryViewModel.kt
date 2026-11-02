@@ -104,12 +104,15 @@ class LibraryViewModel @JvmOverloads constructor(application: Application, priva
     fun selectAll() { saved["selection"] = ArrayList(sources.value.map { it.id }) }
     fun clearSelection() { saved["selection"] = arrayListOf<String>() }
     fun edit(id: String?) { saved["editingId"] = id; saved["formOpen"] = true }
-    fun dismissForm() { saved["formOpen"] = false }
+    /** Form errors are shown inline in the form, so they must not outlive it and resurface as a dialog. */
+    fun dismissForm() { saved["formOpen"] = false; error.value = null }
     private var saveJob: Job? = null
     /** True only while an add/edit is fetching and validating its candidate (the form shows progress and a stop action). */
     val saving = MutableStateFlow(false)
     fun save(id: String?, name: String, url: String, locale: String, format: String, encoding: String, interval: Int) { saveJob = action {
         try {
+            // A new attempt supersedes the previous attempt's error.
+            error.value = null
             saving.value = true
             val requestUrl = SourceRules.url(url).toString()
             if (saved.get<String>("formRetryUrl") == requestUrl && formRetryAt.value > System.currentTimeMillis()) throw DictionaryProblem("SERVER_WAIT")
