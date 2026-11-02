@@ -1,6 +1,7 @@
 package me.midra.dictionarysync.sync
 
 import kotlinx.coroutines.runBlocking
+import me.midra.dictionarysync.data.local.SourceLifecycle
 import me.midra.dictionarysync.probe.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -26,8 +27,8 @@ class MemorySyncStore : SyncStore {
     override suspend fun keys(ids: Collection<String>) = ids.distinct().mapNotNull { keys[it] }
     override suspend fun bindings() = bindings.values.toList()
     override suspend fun bindings(keyIds: Collection<String>) = keyIds.distinct().mapNotNull { bindings[it] }
-    override suspend fun ownedCount() = bindings.values.count { it.ownership == "OWNED" }
-    override suspend fun ownedCount(keyIds: Collection<String>) = keyIds.distinct().count { bindings[it]?.ownership == "OWNED" }
+    override suspend fun ownedCount() = bindings.values.count { it.ownership == Ownership.OWNED }
+    override suspend fun ownedCount(keyIds: Collection<String>) = keyIds.distinct().count { bindings[it]?.ownership == Ownership.OWNED }
     override suspend fun binding(keyId: String) = bindings[keyId]
     override suspend fun references() = refs.toList()
     override suspend fun references(sourceId: String) = refs.filter { it.sourceId == sourceId }
@@ -42,7 +43,7 @@ class MemorySyncStore : SyncStore {
     }
     override suspend fun plan(plan: SyncPlan) {
         plans[plan.id] = plan
-        if (plan.purpose != "APPLY" && plan.state == "CANCELLED") plans[plan.parentId!!] = plans.getValue(plan.parentId).copy(state = "RECOVERY_REQUIRED")
+        if (plan.purpose != PlanPurpose.APPLY && plan.state == PlanState.CANCELLED) plans[plan.parentId!!] = plans.getValue(plan.parentId).copy(state = PlanState.RECOVERY_REQUIRED)
         event()
     }
     override suspend fun binding(binding: ProviderBinding) { bindings[binding.keyId] = binding; event() }
@@ -54,17 +55,17 @@ class MemorySyncStore : SyncStore {
     }
     override suspend fun validate(plan: SyncPlan) {
         if (stale) throw SyncStopped("PLAN_STALE")
-        if (plan.purpose != "APPLY") {
+        if (plan.purpose != PlanPurpose.APPLY) {
             val context = RecoveryContext.decode(plan.recoveryContext!!)
             if (referenceVersion() != context.references || context.sources.any { pin -> sources().find { it.id == pin.id } != pin }) throw SyncStopped("RECOVERY_STALE")
         }
     }
     override suspend fun referenceVersion() = RecoveryContext.references(refs)
     override suspend fun sources() = (plans.values.map { it.sourceId } + refs.map { it.sourceId }).distinct().map { id ->
-        SyncSourceState(id, 1, refs.firstOrNull { it.sourceId == id }?.snapshotId, "ACTIVE")
+        SyncSourceState(id, 1, refs.firstOrNull { it.sourceId == id }?.snapshotId, SourceLifecycle.ACTIVE)
     }
     override suspend fun prepareRecovery(plan: SyncPlan, keys: List<PlanKey>) {
-        plans[plan.parentId!!] = plans.getValue(plan.parentId).copy(state = "RECOVERING")
+        plans[plan.parentId!!] = plans.getValue(plan.parentId).copy(state = PlanState.RECOVERING)
         plans[plan.id] = plan; planKeys.addAll(keys); event()
     }
     override suspend fun activateRecovery(plan: SyncPlan, bindings: List<ProviderBinding>) {
@@ -73,15 +74,15 @@ class MemorySyncStore : SyncStore {
     override suspend fun finishRecovery(plan: SyncPlan) {
         validate(plan)
         val parent = plans.getValue(plan.parentId!!)
-        if (plan.purpose == "RESYNC") { validate(parent); commitData(parent, planKeys(parent.id).filter { it.desired }.map { it.keyId }) }
+        if (plan.purpose == PlanPurpose.RESYNC) { validate(parent); commitData(parent, planKeys(parent.id).filter { it.desired }.map { it.keyId }) }
         else {
-            if (plan.purpose == "REMOVE_SOURCE") refs.removeAll { it.sourceId == parent.sourceId }
-            plans[parent.id] = parent.copy(state = "FAILED_PRESERVED")
+            if (plan.purpose == PlanPurpose.REMOVE_SOURCE) refs.removeAll { it.sourceId == parent.sourceId }
+            plans[parent.id] = parent.copy(state = PlanState.FAILED_PRESERVED)
             val remaining = refs.map { it.keyId }.toSet()
-            bindings.values.filter { it.keyId !in remaining && it.ownership == "BORROWED" && it.conflict == null }
-                .forEach { bindings[it.keyId] = it.copy(ownership = "RELEASED") }
+            bindings.values.filter { it.keyId !in remaining && it.ownership == Ownership.BORROWED && it.conflict == null }
+                .forEach { bindings[it.keyId] = it.copy(ownership = Ownership.RELEASED) }
         }
-        plans[plan.id] = plan.copy(state = "COMMITTED"); event()
+        plans[plan.id] = plan.copy(state = PlanState.COMMITTED); event()
     }
     override suspend fun commit(plan: SyncPlan, keys: List<String>) {
         if (failCommit) throw IllegalStateException("synthetic commit failure")
@@ -91,8 +92,8 @@ class MemorySyncStore : SyncStore {
         refs.removeAll { it.sourceId == plan.sourceId }
         if (plan.newSnapshot != null) refs.addAll(keys.map { SourceReference(plan.sourceId, plan.newSnapshot, it) })
         val remaining = refs.map { it.keyId }.toSet()
-        bindings.values.filter { it.keyId !in remaining && it.ownership == "BORROWED" && it.conflict == null }.forEach { bindings[it.keyId] = it.copy(ownership = "RELEASED") }
-        plans[plan.id] = plan.copy(state = "COMMITTED")
+        bindings.values.filter { it.keyId !in remaining && it.ownership == Ownership.BORROWED && it.conflict == null }.forEach { bindings[it.keyId] = it.copy(ownership = Ownership.RELEASED) }
+        plans[plan.id] = plan.copy(state = PlanState.COMMITTED)
     }
 }
 class Crash : Error()
@@ -156,7 +157,7 @@ class SyncEngineTest {
         f.gateway.insertMode = "NULL"
         try { f.apply(q); fail() } catch (_: SyncStopped) { }
         f.engine().preview(f.store.plans.getValue(q.plan.id))
-        val recovery = f.engine().prepareRecovery(q.plan.id, "COMPENSATE")
+        val recovery = f.engine().prepareRecovery(q.plan.id, PlanPurpose.COMPENSATE)
         try { f.engine().apply(recovery.plan.id, recovery.plan.token) } catch (_: SyncStopped) { }
         assertEquals(0, f.store.fullKeyLoads)
     }
@@ -178,7 +179,7 @@ class SyncEngineTest {
         val original = listOf(a.value().row(1).copy(frequency = 220, shortcut = "よみ"), a.value().row(2))
         original.forEach { f.gateway.rows[it.id] = it }
         val p = f.plan(keys = listOf(a, a)); f.apply(p)
-        assertEquals("BORROWED", f.store.bindings.getValue(a.id).ownership)
+        assertEquals(Ownership.BORROWED, f.store.bindings.getValue(a.id).ownership)
         val d = f.plan(keys = emptyList(), old = p.plan.newSnapshot, snapshot = null); f.apply(d)
         assertEquals(original, f.gateway.rows.values.toList()); assertEquals(0, f.gateway.inserts); assertEquals(0, f.gateway.deletes)
     }
@@ -205,7 +206,7 @@ class SyncEngineTest {
         val d = f.plan(keys = emptyList(), old = p.plan.newSnapshot)
         stopped("EXTERNAL_EDIT") { f.apply(d) }
         assertEquals(0, f.gateway.deletes); assertEquals(2, f.gateway.rows.size); assertEquals(2, f.store.refs.size)
-        assertEquals("RELEASED", f.store.bindings.getValue(b.id).ownership)
+        assertEquals(Ownership.RELEASED, f.store.bindings.getValue(b.id).ownership)
     }
     @Test fun externalDeletionDoesNotReinsertOrPretendSuccess() = runBlocking {
         val f = Fixture(); val p = f.plan(keys = listOf(a)); f.apply(p); f.gateway.rows.clear()
@@ -232,13 +233,13 @@ class SyncEngineTest {
             stopped("INSERT_UNKNOWN") { f.engine().apply(p.plan.id) }
             stopped("INSERT_UNKNOWN") { f.engine().apply(p.plan.id) }
             assertEquals(1, f.gateway.inserts); assertEquals(0, f.gateway.deletes)
-            assertEquals("UNKNOWN", f.store.bindings.getValue(a.id).ownership)
+            assertEquals(Ownership.UNKNOWN, f.store.bindings.getValue(a.id).ownership)
         }
     }
     @Test fun insertReadbackMismatchIsNotOwned() = runBlocking {
         val f = Fixture(); val p = f.plan(keys = listOf(a)); f.gateway.insertMode = "MISMATCH"
         stopped("INSERT_READBACK_MISMATCH") { f.apply(p) }
-        assertNotEquals("OWNED", f.store.bindings.getValue(a.id).ownership)
+        assertNotEquals(Ownership.OWNED, f.store.bindings.getValue(a.id).ownership)
     }
     @Test fun deleteZeroAndMultipleAreNotSuccessful() = runBlocking {
         for ((mode, code) in listOf("ZERO" to "DELETE_ZERO", "MULTIPLE" to "DELETE_MULTIPLE")) {
@@ -338,10 +339,10 @@ class SyncEngineTest {
         val f = Fixture(); f.gateway.rows[1] = a.value().row(1)
         val p = f.plan(keys = listOf(a)); f.apply(p)
         val d = f.plan(keys = emptyList(), old = p.plan.newSnapshot, snapshot = null); f.apply(d)
-        assertEquals("RELEASED", f.store.bindings.getValue(a.id).ownership)
+        assertEquals(Ownership.RELEASED, f.store.bindings.getValue(a.id).ownership)
         f.gateway.rows.clear()
         val n = f.plan("B", listOf(a)); f.apply(n)
-        assertEquals(1, f.gateway.inserts); assertEquals("OWNED", f.store.bindings.getValue(a.id).ownership)
+        assertEquals(1, f.gateway.inserts); assertEquals(Ownership.OWNED, f.store.bindings.getValue(a.id).ownership)
     }
 
     @Test fun largeSourcesUseBatchedProviderAccessNotOnePerWord() = runBlocking {
@@ -389,7 +390,7 @@ class SyncEngineTest {
         f.gateway.insertModes[1] = "THROW" // The first row exists but its ID is lost; the second call is never made.
         try { f.apply(p); fail() } catch (_: IllegalStateException) { }
         assertEquals(1, f.gateway.inserts)
-        assertEquals(listOf("IN_FLIGHT", "IN_FLIGHT"), f.store.operations(p.plan.id).map { it.phase })
+        assertEquals(listOf(OperationPhase.IN_FLIGHT, OperationPhase.IN_FLIGHT), f.store.operations(p.plan.id).map { it.phase })
         stopped("INSERT_UNKNOWN") { f.engine().apply(p.plan.id) }
         assertEquals(1, f.gateway.inserts)
         val f2 = Fixture(); val q = f2.plan(keys = listOf(a, b))
@@ -397,6 +398,6 @@ class SyncEngineTest {
         try { f2.apply(q) } catch (_: Crash) { }
         f2.store.stopAt = Int.MAX_VALUE
         f2.engine().apply(q.plan.id)
-        assertEquals(2, f2.gateway.inserts); assertEquals(setOf("OWNED"), f2.store.bindings.values.map { it.ownership }.toSet())
+        assertEquals(2, f2.gateway.inserts); assertEquals(setOf(Ownership.OWNED), f2.store.bindings.values.map { it.ownership }.toSet())
     }
 }

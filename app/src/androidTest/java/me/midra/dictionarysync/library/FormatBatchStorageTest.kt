@@ -12,6 +12,10 @@ import me.midra.dictionarysync.sync.*
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
+import me.midra.dictionarysync.seed
+import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.fetchAll
+import me.midra.dictionarysync.fetch
 
 /** Independent in-memory databases and synthetic HTTP + Provider. No UserDictionary writes. */
 @RunWith(AndroidJUnit4::class)
@@ -46,15 +50,15 @@ class FormatBatchStorageTest {
         try {
             val bodies = mutableMapOf("https://example.org/a" to xml, "https://example.org/b" to "よみ,共有語,名詞,,注釈", "https://example.org/c" to "つぎ\t第三語\t名詞")
             val calls = mutableListOf<String>()
-            val library = LibraryRepository(context, db) { url, _, _ ->
+            val library = testApp(context, db) { url, _, _ ->
                 calls.add(url)
                 val bytes = bodies.getValue(url).toByteArray(); Download(bytes, Downloader.sha256(bytes), url, "text/plain")
             }
-            val a = library.seedSource(null, "XML", "https://example.org/a", "ja", "AUTO", "AUTO")
-            val b = library.seedSource(null, "CSV", "https://example.org/b", "ja", "APPLE_CSV", "AUTO")
-            val c = library.seedSource(null, "TSV", "https://example.org/c", "ja", "TSV", "AUTO")
+            val a = library.editor.seed(null, "XML", "https://example.org/a", "ja", "AUTO", "AUTO")
+            val b = library.editor.seed(null, "CSV", "https://example.org/b", "ja", "APPLE_CSV", "AUTO")
+            val c = library.editor.seed(null, "TSV", "https://example.org/c", "ja", "TSV", "AUTO")
             val gateway = Gateway(); val engine = SyncEngine(RoomSyncStore(db), gateway, "synthetic-install")
-            assertEquals(3, library.fetchAll().count { it.state == "FETCHED" })
+            assertEquals(3, library.fetchAll().count { it.state == FetchState.FETCHED })
             for (id in listOf(a, b, c)) { val p = prepare(db, engine, id); engine.apply(p.plan.id, p.plan.token) }
             assertEquals(2, gateway.inserts); assertEquals(3, db.sync().references().size)
             val beforeA = db.library().source(a)!!
@@ -66,7 +70,7 @@ class FormatBatchStorageTest {
             calls.clear()
             val results = library.fetchAll()
             assertEquals(3, calls.size); assertEquals(3, calls.toSet().size)
-            assertEquals(setOf("FETCH_FAILED", "FETCHED"), results.map { it.state }.toSet())
+            assertEquals(setOf(FetchState.FETCH_FAILED, FetchState.FETCHED), results.map { it.state }.toSet())
             val failed = db.library().source(a)!!
             assertEquals(beforeA.latestSnapshot, failed.latestSnapshot); assertEquals(beforeA.activeSnapshot, failed.activeSnapshot)
             assertEquals(beforeA.fetchedAt, failed.fetchedAt); assertEquals(beforeA.syncedAt, failed.syncedAt)
@@ -86,8 +90,8 @@ class FormatBatchStorageTest {
         val db = Room.inMemoryDatabaseBuilder(context, DictionaryDatabase::class.java).build()
         try {
             var body = xml
-            val library = LibraryRepository(context, db) { url, _, _ -> val bytes = body.toByteArray(); Download(bytes, Downloader.sha256(bytes), url, "application/xml") }
-            val id = library.seedSource(null, "XML", "https://example.org/a", "ja", "PLIST_XML", "AUTO")
+            val library = testApp(context, db) { url, _, _ -> val bytes = body.toByteArray(); Download(bytes, Downloader.sha256(bytes), url, "application/xml") }
+            val id = library.editor.seed(null, "XML", "https://example.org/a", "ja", "PLIST_XML", "AUTO")
             library.fetchAll()
             val gateway = Gateway(); val engine = SyncEngine(RoomSyncStore(db), gateway, "synthetic-install")
             val preview = prepare(db, engine, id)
@@ -108,21 +112,21 @@ class FormatBatchStorageTest {
         try {
             var body = xml
             var mime = "text/plain"
-            val library = LibraryRepository(context, db) { url, _, _ -> val bytes = body.toByteArray(); Download(bytes, Downloader.sha256(bytes), url, mime) }
-            val id = library.seedSource(null, "自動形式", "https://example.org/a", "ja", "AUTO", "AUTO")
+            val library = testApp(context, db) { url, _, _ -> val bytes = body.toByteArray(); Download(bytes, Downloader.sha256(bytes), url, mime) }
+            val id = library.editor.seed(null, "自動形式", "https://example.org/a", "ja", "AUTO", "AUTO")
             library.fetch(id)
             val before = db.library().source(id)!!
             val snapshot = db.library().snapshot(before.latestSnapshot!!)!!
             for ((bad, type) in listOf(xml.dropLast(3) to "application/xml", xml.replace("<key>shortcut", "<key>phrase") to "text/plain", "r,w,p,,\nr,w,p,,extra,column" to "text/csv", xml to "text/html", "r\tw\tp" to "application/xml")) {
                 body = bad; mime = type; library.fetch(id)
                 val s = db.library().source(id)!!
-                assertEquals("FETCH_FAILED", s.state); assertEquals(before.latestSnapshot, s.latestSnapshot)
+                assertEquals(FetchState.FETCH_FAILED, s.state); assertEquals(before.latestSnapshot, s.latestSnapshot)
                 assertEquals(before.fetchedAt, s.fetchedAt); assertEquals(listOf(snapshot.id), db.library().snapshotIds(id))
                 assertEquals(1, db.library().entries(snapshot.id).size)
             }
             body = "よみ,共有語,名詞,,注釈"; mime = "text/csv"; library.fetch(id)
             assertEquals("CSV_MANUAL_REQUIRED", db.library().source(id)!!.error)
-            library.seedSource(id, before.name, before.url, "ja", "APPLE_CSV", "AUTO"); library.fetch(id)
+            library.editor.seed(id, before.name, before.url, "ja", "APPLE_CSV", "AUTO"); library.fetch(id)
             val csv = db.library().snapshot(db.library().source(id)!!.latestSnapshot!!)!!
             assertEquals("apple-csv-v1", csv.parser)
             assertEquals("注釈", db.library().entries(csv.id).single().comment)
@@ -134,10 +138,10 @@ class FormatBatchStorageTest {
         try {
             val body = "# Gboard Dictionary version:2\n# Gboard Dictionary format:shortcut\tword\tlanguage_tag\tpos_tag\n" +
                 "よみ\t共有語\tfr-CA\t\nよみ\t共有語\ten-CA\t\nよみ\t共有語\t\t\n"
-            val library = LibraryRepository(context, db) { url, _, _ -> val bytes = body.toByteArray(); Download(bytes, Downloader.sha256(bytes), url, "text/plain") }
+            val library = testApp(context, db) { url, _, _ -> val bytes = body.toByteArray(); Download(bytes, Downloader.sha256(bytes), url, "text/plain") }
             val gateway = Gateway()
-            val sync = SyncRepository(context, db) { SyncEngine(RoomSyncStore(db), gateway, "synthetic-install") }
-            val id = library.seedSource(null, "Gboard", "https://example.org/g", "AUTO", "AUTO", "AUTO")
+            val sync = SourceSync(context, db) { SyncEngine(RoomSyncStore(db), gateway, "synthetic-install") }
+            val id = library.editor.seed(null, "Gboard", "https://example.org/g", "AUTO", "AUTO", "AUTO")
             library.fetch(id)
             val snapshot = db.library().snapshot(db.library().source(id)!!.latestSnapshot!!)!!
             assertEquals("gboard-v2", snapshot.parser); assertEquals("ja", snapshot.resolvedLocale)
@@ -146,7 +150,7 @@ class FormatBatchStorageTest {
             assertTrue(sync.synchronize(id))
             assertEquals(setOf("fr_CA", "en_CA", null), gateway.rows.values.map { it.locale }.toSet())
             // A manual language overrides what the file declares, so the three rows collapse into one key.
-            library.seedSource(id, "Gboard", "https://example.org/g", "ja", "AUTO", "AUTO"); library.fetch(id)
+            library.editor.seed(id, "Gboard", "https://example.org/g", "ja", "AUTO", "AUTO"); library.fetch(id)
             val manual = db.library().snapshot(db.library().source(id)!!.latestSnapshot!!)!!
             assertEquals(listOf("ja", "ja", "ja"), db.library().entries(manual.id).map { it.locale }); assertEquals(1, manual.uniqueCount)
             assertTrue(sync.synchronize(id))
@@ -158,8 +162,8 @@ class FormatBatchStorageTest {
         val db = Room.inMemoryDatabaseBuilder(context, DictionaryDatabase::class.java).build()
         try {
             var body = xml.replace("</array>", xml.substringAfter("<array>").substringBefore("</array>") + "</array>")
-            val library = LibraryRepository(context, db) { url, _, _ -> val bytes = body.toByteArray(); Download(bytes, Downloader.sha256(bytes), url, "application/xml") }
-            val id = library.seedSource(null, "同一行XML", "https://example.org/a", "ja", "AUTO", "AUTO")
+            val library = testApp(context, db) { url, _, _ -> val bytes = body.toByteArray(); Download(bytes, Downloader.sha256(bytes), url, "application/xml") }
+            val id = library.editor.seed(null, "同一行XML", "https://example.org/a", "ja", "AUTO", "AUTO")
             library.fetchAll()
             val first = db.library().snapshot(db.library().source(id)!!.latestSnapshot!!)!!
             assertEquals(2, first.count); assertEquals(1, first.uniqueCount); assertEquals(1, first.lines)
@@ -167,7 +171,7 @@ class FormatBatchStorageTest {
             val gateway = Gateway(); val engine = SyncEngine(RoomSyncStore(db), gateway, "synthetic-install")
             val initial = prepare(db, engine, id); engine.apply(initial.plan.id, initial.plan.token)
             body = "<plist version='1.0'><array/></plist>"; library.fetchAll()
-            assertEquals("FETCHED", db.library().source(id)!!.state)
+            assertEquals(FetchState.FETCHED, db.library().source(id)!!.state)
             val empty = prepare(db, engine, id)
             assertEquals(1, empty.ownedDeletes.size)
             try { engine.apply(empty.plan.id, "wrong-candidate"); fail() } catch (e: SyncStopped) { assertEquals("APPROVAL_REQUIRED", e.code) }
@@ -180,20 +184,20 @@ class FormatBatchStorageTest {
         val db = Room.inMemoryDatabaseBuilder(context, DictionaryDatabase::class.java).build()
         try {
             val calls = mutableListOf<Pair<String, Boolean>>()
-            val library = LibraryRepository(context, db) { url, wifi, _ ->
+            val library = testApp(context, db) { url, wifi, _ ->
                 calls += url to wifi
                 if (url.endsWith("wait")) throw DictionaryProblem("WIFI_WAIT")
                 val bytes = "r,w,p,,".toByteArray(); Download(bytes, Downloader.sha256(bytes), url, "text/csv")
             }
-            val wait = library.seedSource(null, "待機", "https://example.org/wait", "ja", "APPLE_CSV", "AUTO")
-            val ok = library.seedSource(null, "成功", "https://example.org/ok", "ja", "APPLE_CSV", "AUTO")
-            val deleting = library.seedSource(null, "削除処理中", "https://example.org/deleting", "ja", "APPLE_CSV", "AUTO")
-            db.library().updateSource(db.library().source(deleting)!!.copy(lifecycle = "DELETE_PENDING"))
+            val wait = library.editor.seed(null, "待機", "https://example.org/wait", "ja", "APPLE_CSV", "AUTO")
+            val ok = library.editor.seed(null, "成功", "https://example.org/ok", "ja", "APPLE_CSV", "AUTO")
+            val deleting = library.editor.seed(null, "削除処理中", "https://example.org/deleting", "ja", "APPLE_CSV", "AUTO")
+            db.library().updateSource(db.library().source(deleting)!!.copy(lifecycle = SourceLifecycle.DELETE_PENDING))
             val result = library.fetchAll()
             assertEquals(setOf(wait, ok), result.map { it.id }.toSet())
             assertEquals(2, calls.size); assertEquals(1, calls.map { it.second }.toSet().size)
-            assertEquals("NETWORK_WAIT", db.library().source(wait)!!.state)
-            assertEquals("FETCHED", db.library().source(ok)!!.state)
+            assertEquals(FetchState.NETWORK_WAIT, db.library().source(wait)!!.state)
+            assertEquals(FetchState.FETCHED, db.library().source(ok)!!.state)
             assertNull(db.library().source(deleting)!!.latestSnapshot)
             assertTrue(db.sync().plans().isEmpty()); assertTrue(db.sync().references().isEmpty())
         } finally { db.close() }

@@ -20,6 +20,8 @@ import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import me.midra.dictionarysync.data.local.SourceLifecycle
+import me.midra.dictionarysync.data.local.SyncState
 
 /** Opt-in real HTTPS + production Activity journey. The target IME must stay disabled. */
 @RunWith(AndroidJUnit4::class)
@@ -39,8 +41,8 @@ class PublicSourceUiAcceptanceTest {
             requireNotNull(args.getString(key)) { key }.let { String(Base64.decode(it, Base64.DEFAULT), Charsets.UTF_8) }
         }
         val existing = runBlocking { db.library().allSources() }
-        check(existing.none { (it.url in urls || it.name in names) && it.lifecycle != "ACTIVE" }) { "Completed/prior ledger: do not recreate" }
-        val before = existing.filter { it.lifecycle != "DELETED" && it.url !in urls }
+        check(existing.none { (it.url in urls || it.name in names) && it.lifecycle != SourceLifecycle.ACTIVE }) { "Completed/prior ledger: do not recreate" }
+        val before = existing.filter { it.lifecycle != SourceLifecycle.DELETED && it.url !in urls }
         val ids = mutableListOf<String>()
         runBlocking { Preferences(context).setSetupDone(true) }
         ActivityScenario.launch(MainActivity::class.java).use {
@@ -92,7 +94,7 @@ class PublicSourceUiAcceptanceTest {
             }
             select(ids)
             compose.onNodeWithText("無効化", substring = false).performClick()
-            waitFor(ids) { !it.enabled && it.syncState == "REMOVED" }
+            waitFor(ids) { !it.enabled && it.syncState == SyncState.REMOVED }
             compose.onNodeWithText("2件を受け付けました", substring = true).assertExists()
             val snapshots = runBlocking { ids.map { db.library().source(it)!!.latestSnapshot } }
             select(ids, enter = false)
@@ -103,13 +105,13 @@ class PublicSourceUiAcceptanceTest {
             // Disabling again needs no Provider access for unapplied sources.
             select(ids)
             compose.onNodeWithText("無効化", substring = false).performClick()
-            waitFor(ids) { !it.enabled && it.syncState == "REMOVED" }
+            waitFor(ids) { !it.enabled && it.syncState == SyncState.REMOVED }
             assertEquals(snapshots, runBlocking { ids.map { db.library().source(it)!!.latestSnapshot } })
             select(ids, enter = false)
             compose.onNodeWithText("削除", substring = false).performClick()
             compose.onNodeWithText("2件のソースを削除しますか？").assertIsDisplayed()
             compose.onNode(hasText("削除", substring = false) and hasAnyAncestor(isDialog())).performClick()
-            waitFor(ids) { it.lifecycle == "DELETED" }
+            waitFor(ids) { it.lifecycle == SourceLifecycle.DELETED }
             compose.onNodeWithText("2件を受け付けました", substring = true).assertExists()
         }
         assertImeDisabled()

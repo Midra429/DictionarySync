@@ -17,7 +17,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import me.midra.dictionarysync.R
-import me.midra.dictionarysync.library.LibraryViewModel
+import me.midra.dictionarysync.ui.settings.SettingsState
 import me.midra.dictionarysync.sync.SyncReadiness
 import me.midra.dictionarysync.ui.common.AppIcons
 import me.midra.dictionarysync.ui.diagnostics.StatusRow
@@ -28,7 +28,7 @@ import me.midra.dictionarysync.ui.sources.Tone
 
 /** First-launch setup. Every step can be left for later: none of it is required to add or browse sources. */
 @Composable
-fun SetupScreen(model: LibraryViewModel, onOpenDiagnostics: () -> Unit, onFinish: () -> Unit) {
+fun SetupScreen(model: SettingsState, onOpenDiagnostics: () -> Unit, onFinish: () -> Unit) {
     val batteryOptimized by model.batteryOptimized.collectAsStateWithLifecycle()
     val notificationsEnabled by model.notificationsEnabled.collectAsStateWithLifecycle()
     val readiness by model.readiness.collectAsStateWithLifecycle()

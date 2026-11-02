@@ -6,12 +6,15 @@ import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
 import me.midra.dictionarysync.data.local.*
 import me.midra.dictionarysync.data.source.*
-import me.midra.dictionarysync.library.LibraryRepository
+import me.midra.dictionarysync.AppContainer
 import me.midra.dictionarysync.probe.*
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import me.midra.dictionarysync.seed
+import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.fetch
 
 /** Dedicated synthetic databases and an in-memory gateway. Never accesses the shared UserDictionary. */
 @RunWith(AndroidJUnit4::class)
@@ -36,12 +39,12 @@ class SyncRecoveryStorageTest {
     }
     private inner class Fixture(val db: DictionaryDatabase, val gateway: Gateway = Gateway()) {
         var body = "よみ\t復旧合成A\t名詞"
-        val library = LibraryRepository(context, db) { url, _, _ ->
+        val library = testApp(context, db) { url, _, _ ->
             val bytes = body.toByteArray(); Download(bytes, Downloader.sha256(bytes), url, "text/plain")
         }
         fun engine() = SyncEngine(RoomSyncStore(db), gateway, "recovery-install")
         suspend fun source(name: String = "A"): String {
-            val id = library.seedSource(null, name, "https://example.org/recovery/$name", "ja", "TSV", "UTF-8")
+            val id = library.editor.seed(null, name, "https://example.org/recovery/$name", "ja", "TSV", "UTF-8")
             library.fetch(id); return id
         }
         suspend fun plan(id: String, deleting: Boolean = false): SyncPreview {
@@ -64,17 +67,17 @@ class SyncRecoveryStorageTest {
             val p = f.plan(id); f.blockCommit()
             try { f.apply(p); fail() } catch (_: android.database.SQLException) { }
             val parentOps = db.sync().operations(p.plan.id)
-            val r = f.engine().prepareRecovery(p.plan.id, "COMPENSATE")
+            val r = f.engine().prepareRecovery(p.plan.id, PlanPurpose.COMPENSATE)
             db.close(); db = Room.databaseBuilder(context, DictionaryDatabase::class.java, name).build()
             val reopened = Fixture(db, f.gateway)
             reopened.engine().apply(r.plan.id, r.plan.token)
             val after = db.library().source(id)!!
             assertEquals(before.activeSnapshot, after.activeSnapshot); assertEquals(before.syncedAt, after.syncedAt)
-            assertEquals("FAILED_PRESERVED", after.syncState); assertEquals("ACTIVE", after.lifecycle)
+            assertEquals(SyncState.FAILED_PRESERVED, after.syncState); assertEquals(SourceLifecycle.ACTIVE, after.lifecycle)
             assertEquals(refs, db.sync().references()); assertEquals(parentOps, db.sync().operations(p.plan.id))
             assertEquals(1, f.gateway.rows.size); assertTrue(a.matches(f.gateway.rows.values.single()))
-            assertEquals("FAILED_PRESERVED", db.sync().plans().single { it.id == p.plan.id }.state)
-            assertEquals("COMMITTED", db.sync().plans().single { it.id == r.plan.id }.state)
+            assertEquals(PlanState.FAILED_PRESERVED, db.sync().plans().single { it.id == p.plan.id }.state)
+            assertEquals(PlanState.COMMITTED, db.sync().plans().single { it.id == r.plan.id }.state)
         } finally { db.close(); context.deleteDatabase(name) }
     }
     @Test fun resyncUsesPinnedCandidateAndCommitsParentAndChildAtomically(): Unit = runBlocking {
@@ -87,22 +90,22 @@ class SyncRecoveryStorageTest {
             f.body = "よみ\t復旧合成A\t名詞\nよみ\t復旧合成B\t名詞"; f.library.fetch(aId)
             val p = f.plan(aId)
             try { f.apply(p); fail() } catch (e: SyncStopped) { assertEquals("EXTERNAL_EDIT", e.code) }
-            val r = f.engine().prepareRecovery(p.plan.id, "RESYNC")
+            val r = f.engine().prepareRecovery(p.plan.id, PlanPurpose.RESYNC)
             assertEquals(setOf(aId, bId), r.relatedSources.toSet())
             f.body = "べつ\t未承認の新版\t名詞"; f.library.fetch(aId)
             f.blockCommit()
             try { f.apply(r); fail() } catch (_: android.database.SQLException) { }
             assertEquals(3, f.gateway.inserts); assertEquals(edited, f.gateway.rows[original.id])
             assertNotEquals(p.plan.newSnapshot, db.library().source(aId)!!.activeSnapshot)
-            assertEquals("RECOVERING", db.sync().plans().single { it.id == p.plan.id }.state)
-            assertEquals("RECOVERY_REQUIRED", db.sync().plans().single { it.id == r.plan.id }.state)
+            assertEquals(PlanState.RECOVERING, db.sync().plans().single { it.id == p.plan.id }.state)
+            assertEquals(PlanState.RECOVERY_REQUIRED, db.sync().plans().single { it.id == r.plan.id }.state)
             db.openHelper.writableDatabase.execSQL("DROP TRIGGER fail_recovery_commit")
             f.engine().apply(r.plan.id)
             assertEquals(3, f.gateway.inserts)
             assertEquals(p.plan.newSnapshot, db.library().source(aId)!!.activeSnapshot)
             assertNotEquals(p.plan.newSnapshot, db.library().source(aId)!!.latestSnapshot)
-            assertEquals("COMMITTED", db.sync().plans().single { it.id == p.plan.id }.state)
-            assertEquals("COMMITTED", db.sync().plans().single { it.id == r.plan.id }.state)
+            assertEquals(PlanState.COMMITTED, db.sync().plans().single { it.id == p.plan.id }.state)
+            assertEquals(PlanState.COMMITTED, db.sync().plans().single { it.id == r.plan.id }.state)
             assertEquals(3, db.sync().references().size)
         } finally { db.close() }
     }
@@ -113,20 +116,20 @@ class SyncRecoveryStorageTest {
             val before = db.library().source(id)!!
             val p = f.plan(id, deleting = true); f.blockCommit()
             try { f.apply(p); fail() } catch (_: android.database.SQLException) { }
-            assertEquals("DELETE_PENDING", db.library().source(id)!!.lifecycle)
-            val r = f.engine().prepareRecovery(p.plan.id, "COMPENSATE")
+            assertEquals(SourceLifecycle.DELETE_PENDING, db.library().source(id)!!.lifecycle)
+            val r = f.engine().prepareRecovery(p.plan.id, PlanPurpose.COMPENSATE)
             db.openHelper.writableDatabase.execSQL("CREATE TRIGGER fail_compensated BEFORE UPDATE ON sources WHEN NEW.syncState='FAILED_PRESERVED' BEGIN SELECT RAISE(ABORT, 'synthetic compensation commit failure'); END")
             try { f.apply(r); fail() } catch (_: android.database.SQLException) { }
             assertEquals(before.activeSnapshot, db.library().source(id)!!.activeSnapshot)
-            assertEquals("DELETE_PENDING", db.library().source(id)!!.lifecycle)
-            assertEquals("RECOVERING", db.sync().plans().single { it.id == p.plan.id }.state)
-            assertEquals("RECOVERY_REQUIRED", db.sync().plans().single { it.id == r.plan.id }.state)
+            assertEquals(SourceLifecycle.DELETE_PENDING, db.library().source(id)!!.lifecycle)
+            assertEquals(PlanState.RECOVERING, db.sync().plans().single { it.id == p.plan.id }.state)
+            assertEquals(PlanState.RECOVERY_REQUIRED, db.sync().plans().single { it.id == r.plan.id }.state)
             db.openHelper.writableDatabase.execSQL("DROP TRIGGER fail_compensated")
             f.engine().apply(r.plan.id)
             assertEquals(2, f.gateway.inserts); assertEquals(1, f.gateway.deletes)
             assertEquals(before.syncedAt, db.library().source(id)!!.syncedAt)
-            assertEquals("ACTIVE", db.library().source(id)!!.lifecycle)
-            assertEquals("FAILED_PRESERVED", db.library().source(id)!!.syncState)
+            assertEquals(SourceLifecycle.ACTIVE, db.library().source(id)!!.lifecycle)
+            assertEquals(SyncState.FAILED_PRESERVED, db.library().source(id)!!.syncState)
         } finally { db.close() }
     }
     @Test fun approvalAndConflictReleaseRollbackTogetherBeforeAnyProviderWrite(): Unit = runBlocking {
@@ -135,7 +138,7 @@ class SyncRecoveryStorageTest {
             val f = Fixture(db); val id = f.source(); f.apply(f.plan(id)); f.gateway.rows.clear()
             val p = f.plan(id)
             try { f.apply(p); fail() } catch (e: SyncStopped) { assertEquals("EXTERNAL_DELETE", e.code) }
-            val r = f.engine().prepareRecovery(p.plan.id, "RESYNC")
+            val r = f.engine().prepareRecovery(p.plan.id, PlanPurpose.RESYNC)
             db.openHelper.writableDatabase.execSQL("CREATE TRIGGER fail_release BEFORE UPDATE ON provider_bindings WHEN OLD.conflict IS NOT NULL AND NEW.conflict IS NULL BEGIN SELECT RAISE(ABORT, 'synthetic activation failure'); END")
             // Bindings are written with INSERT OR REPLACE; the old row is still visible to a BEFORE INSERT trigger.
             db.openHelper.writableDatabase.execSQL("CREATE TRIGGER fail_release_replace BEFORE INSERT ON provider_bindings WHEN NEW.conflict IS NULL AND EXISTS (SELECT 1 FROM provider_bindings WHERE keyId = NEW.keyId AND conflict IS NOT NULL) BEGIN SELECT RAISE(ABORT, 'synthetic activation failure'); END")

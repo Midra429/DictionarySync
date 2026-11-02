@@ -21,28 +21,29 @@ import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
 import me.midra.dictionarysync.R
-import me.midra.dictionarysync.library.LibraryViewModel
+import me.midra.dictionarysync.ui.AppViewModel
 import me.midra.dictionarysync.ui.common.*
 
 /** Read-only word list of the latest fetched generation (detail pane). */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class, ExperimentalMaterial3Api::class, ExperimentalMaterial3AdaptiveApi::class)
 @Composable
-fun EntriesScreen(model: LibraryViewModel, sourceId: String, onBack: () -> Unit) {
-    val loaded by model.sourceList.collectAsStateWithLifecycle()
-    val selected by model.selected.collectAsStateWithLifecycle()
-    val busy by model.busy.collectAsStateWithLifecycle()
+fun EntriesScreen(model: AppViewModel, sourceId: String, onBack: () -> Unit) {
+    val state = model.entries
+    val loaded by model.sources.loaded.collectAsStateWithLifecycle()
+    val selected by state.selected.collectAsStateWithLifecycle()
+    val busy by model.operations.busy.collectAsStateWithLifecycle()
     val source = loaded?.find { it.id == sourceId }
     // The back stack is the source of truth; the ViewModel only drives the paged query.
     LaunchedEffect(sourceId, selected, loaded) {
         if (loaded != null && source == null) onBack()
-        else if (selected != sourceId) model.select(sourceId)
+        else if (selected != sourceId) state.select(sourceId)
     }
-    val entries = model.entries.collectAsLazyPagingItems()
-    val query by model.query.collectAsStateWithLifecycle()
-    val snapshots by model.snapshots.collectAsStateWithLifecycle()
-    val chosen by model.selectedSnapshot.collectAsStateWithLifecycle()
+    val entries = state.entries.collectAsLazyPagingItems()
+    val query by state.query.collectAsStateWithLifecycle()
+    val snapshots by state.snapshots.collectAsStateWithLifecycle()
+    val chosen by state.snapshot.collectAsStateWithLifecycle()
     val snapshot = snapshots.find { it.id == chosen }
-    val locales by model.locales.collectAsStateWithLifecycle()
+    val locales by state.locales.collectAsStateWithLifecycle()
     val mixed = locales.size > 1
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     // The scene scope exists only while the source list is beside this pane; then the list itself is the way back.
@@ -59,8 +60,8 @@ fun EntriesScreen(model: LibraryViewModel, sourceId: String, onBack: () -> Unit)
                 },
                 navigationIcon = { if (!besideList) TooltipIconButton(AppIcons.ArrowBack, stringResource(R.string.action_back), onBack) },
                 actions = {
-                    TooltipIconButton(AppIcons.Edit, stringResource(R.string.entries_edit_source), { model.edit(sourceId) },
-                        enabled = !busy && source?.lifecycle == "ACTIVE")
+                    TooltipIconButton(AppIcons.Edit, stringResource(R.string.entries_edit_source), { model.form.edit(sourceId) },
+                        enabled = !busy && source?.listed == true)
                 },
                 scrollBehavior = scrollBehavior,
             )
@@ -75,7 +76,7 @@ fun EntriesScreen(model: LibraryViewModel, sourceId: String, onBack: () -> Unit)
                 }
             }
             item(key = "search") {
-                SearchField(query, model::search, stringResource(R.string.entries_search),
+                SearchField(query, state::search, stringResource(R.string.entries_search),
                     Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("entries-search"))
             }
             items(entries.itemCount, key = entries.itemKey { "${it.snapshotId}:${it.line}" }) { index ->

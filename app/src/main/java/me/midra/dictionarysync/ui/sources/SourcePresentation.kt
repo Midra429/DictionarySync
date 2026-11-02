@@ -3,8 +3,12 @@ package me.midra.dictionarysync.ui.sources
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import me.midra.dictionarysync.data.local.FetchState
 import me.midra.dictionarysync.data.local.SourceEntity
+import me.midra.dictionarysync.data.local.SourceLifecycle
+import me.midra.dictionarysync.data.local.SyncState
 import me.midra.dictionarysync.sync.PendingRequest
+import me.midra.dictionarysync.sync.WaitReason
 
 /** When the last successful fetch (including a validated 304) happened. Not the shared-dictionary write time. */
 sealed interface UpdatedAt {
@@ -39,28 +43,29 @@ enum class StatusKind {
 data class SourceStatus(val kind: StatusKind, val tone: Tone, val reason: String? = null, val until: Long? = null)
 
 fun sourceStatus(source: SourceEntity, request: PendingRequest?, now: Long): SourceStatus {
-    val waiting = request != null && request.generation > request.completedGeneration
-    val networkWait = waiting && (source.state == "NETWORK_WAIT" || request.waitReason in setOf("WIFI_WAIT", "NETWORK_WAIT", "POLICY_CHANGED"))
-    val serverUntil = maxOf(source.serverNotBefore, if (request?.waitReason == "SERVER_WAIT") request.notBefore else 0)
+    val waiting = request?.pending == true
+    val networkWait = waiting && (source.state == FetchState.NETWORK_WAIT || request.waitReason?.network == true)
+    val serverUntil = maxOf(source.serverNotBefore, if (request?.waitReason == WaitReason.SERVER_WAIT) request.notBefore else 0)
     return when {
-        source.lifecycle == "DELETE_PENDING" -> if (source.syncError != null) SourceStatus(StatusKind.DeletePending, Tone.Problem, source.syncError)
+        source.lifecycle == SourceLifecycle.DELETE_PENDING -> if (source.syncError != null) SourceStatus(StatusKind.DeletePending, Tone.Problem, source.syncError)
             else SourceStatus(StatusKind.Deleting, Tone.Working)
-        source.state == "FETCHING" -> SourceStatus(StatusKind.Fetching, Tone.Working)
-        source.syncState in setOf("RECOVERY_REQUIRED", "RECOVERING") -> SourceStatus(StatusKind.Interrupted, Tone.Problem, source.syncError)
-        source.syncState in setOf("PREPARED", "ADDING", "REMOVING") -> SourceStatus(StatusKind.Reflecting, Tone.Working)
+        source.state == FetchState.FETCHING -> SourceStatus(StatusKind.Fetching, Tone.Working)
+        source.syncState == SyncState.RECOVERY_REQUIRED || source.syncState == SyncState.RECOVERING ->
+            SourceStatus(StatusKind.Interrupted, Tone.Problem, source.syncError)
+        source.syncState in setOf(SyncState.PREPARED, SyncState.ADDING, SyncState.REMOVING) -> SourceStatus(StatusKind.Reflecting, Tone.Working)
         source.syncError != null -> SourceStatus(StatusKind.ReflectFailed, Tone.Problem, source.syncError)
-        source.state == "FETCH_FAILED" -> SourceStatus(StatusKind.FetchFailed, Tone.Attention, source.error)
-        networkWait -> SourceStatus(StatusKind.NetworkWait, Tone.Working, source.error ?: request?.waitReason)
-        waiting && serverUntil > now -> SourceStatus(StatusKind.ServerWait, Tone.Working, "SERVER_WAIT", serverUntil)
+        source.state == FetchState.FETCH_FAILED -> SourceStatus(StatusKind.FetchFailed, Tone.Attention, source.error)
+        networkWait -> SourceStatus(StatusKind.NetworkWait, Tone.Working, source.error ?: request?.waitReason?.name)
+        waiting && serverUntil > now -> SourceStatus(StatusKind.ServerWait, Tone.Working, WaitReason.SERVER_WAIT.name, serverUntil)
         waiting && request.notBefore > now -> SourceStatus(StatusKind.RetryWait, Tone.Working, source.error, request.notBefore)
         waiting -> SourceStatus(StatusKind.Queued, Tone.Working)
-        source.state == "INTERRUPTED" -> SourceStatus(StatusKind.FetchInterrupted, Tone.Attention)
-        !source.enabled -> if (source.activeSnapshot != null || source.syncState == "REMOVE_PENDING") SourceStatus(StatusKind.ReleasePending, Tone.Working)
+        source.state == FetchState.INTERRUPTED -> SourceStatus(StatusKind.FetchInterrupted, Tone.Attention)
+        !source.enabled -> if (source.activeSnapshot != null || source.syncState == SyncState.REMOVE_PENDING) SourceStatus(StatusKind.ReleasePending, Tone.Working)
             else SourceStatus(StatusKind.Disabled, Tone.Neutral)
-        source.latestSnapshot == null || source.state == "SETTINGS_CHANGED" -> SourceStatus(StatusKind.NotFetched, Tone.Neutral)
-        source.syncState == "FAILED_PRESERVED" -> SourceStatus(StatusKind.Reverted, Tone.Attention)
-        source.syncState == "SYNCED" -> SourceStatus(StatusKind.Synced, Tone.Positive)
-        source.syncState == "UPDATE_PENDING" -> SourceStatus(StatusKind.ReflectQueued, Tone.Working)
+        source.latestSnapshot == null || source.state == FetchState.SETTINGS_CHANGED -> SourceStatus(StatusKind.NotFetched, Tone.Neutral)
+        source.syncState == SyncState.FAILED_PRESERVED -> SourceStatus(StatusKind.Reverted, Tone.Attention)
+        source.syncState == SyncState.SYNCED -> SourceStatus(StatusKind.Synced, Tone.Positive)
+        source.syncState == SyncState.UPDATE_PENDING -> SourceStatus(StatusKind.ReflectQueued, Tone.Working)
         else -> SourceStatus(StatusKind.ReflectPending, Tone.Neutral)
     }
 }

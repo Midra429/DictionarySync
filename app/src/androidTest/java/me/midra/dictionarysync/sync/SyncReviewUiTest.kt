@@ -15,15 +15,15 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class SyncReviewUiTest {
     @get:Rule val compose = createComposeRule()
-    private fun preview(purpose: String, blockers: List<String> = emptyList()): SyncPreview {
+    private fun preview(purpose: PlanPurpose, blockers: List<String> = emptyList()): SyncPreview {
         val plan = SyncPlan("child", "A", 1, "old", "candidate", "install", "fake", "token",
-            approved = purpose == "APPLY", state = if (purpose == "APPLY") "RECOVERY_REQUIRED" else "PREPARED",
+            approved = purpose == PlanPurpose.APPLY, state = if (purpose == PlanPurpose.APPLY) PlanState.RECOVERY_REQUIRED else PlanState.PREPARED,
             createdAt = 1, purpose = purpose)
         return SyncPreview(plan, emptyList(), emptyList(), emptyList(), 1, 0, 1, listOf("A", "B"), blockers)
     }
     @Test fun resyncDisplaysCombinedSourcesAndApprovalAction() {
         var applied = false
-        compose.setContent { DictionarySyncTheme { SyncReview(preview("RESYNC"), false,
+        compose.setContent { DictionarySyncTheme { SyncReview(preview(PlanPurpose.RESYNC), false,
             listOf(SourceEntity("A", "ソース甲", "https://example.org/a"), SourceEntity("B", "ソース乙", "https://example.org/b")),
             {}, {}, { applied = true }, {}) } }
         compose.onNodeWithText("関連ソースを再反映").assertIsDisplayed()
@@ -34,7 +34,7 @@ class SyncReviewUiTest {
         assertTrue(applied)
     }
     @Test fun unsafeResyncIsDisabledAndPartialCompensationWarnsIncomplete() {
-        compose.setContent { DictionarySyncTheme { SyncReview(preview("RESYNC", listOf("INSERT_UNKNOWN")), false,
+        compose.setContent { DictionarySyncTheme { SyncReview(preview(PlanPurpose.RESYNC, listOf("INSERT_UNKNOWN")), false,
             emptyList(), {}, {}, {}, {}) } }
         compose.onNodeWithText("再反映を実行").assertIsNotEnabled()
         compose.onNodeWithTag("sync-all-differences").performScrollToNode(hasText("未解決: INSERT_UNKNOWN"))
@@ -42,13 +42,13 @@ class SyncReviewUiTest {
         compose.onNodeWithText("確認できる範囲だけを処理します。").assertExists()
     }
     @Test fun originalFailureOpensReviewBeforeAnyRecoveryIsApplied() {
-        var chosen: String? = null
+        var chosen: PlanPurpose? = null
         var applied = false
-        compose.setContent { DictionarySyncTheme { SyncReview(preview("APPLY"), false,
+        compose.setContent { DictionarySyncTheme { SyncReview(preview(PlanPurpose.APPLY), false,
             emptyList(), {}, {}, { applied = true }, { chosen = it }) } }
         compose.onNodeWithTag("sync-all-differences").performScrollToNode(hasText("今回の反映を取り消して元に戻す"))
         compose.onNodeWithText("今回の反映を取り消して元に戻す").performClick()
-        assertEquals("COMPENSATE", chosen); assertFalse(applied)
+        assertEquals(PlanPurpose.COMPENSATE, chosen); assertFalse(applied)
     }
     @Test fun fullDifferencesIncludeBeyondTwentyAndDistinguishRetainedRows() {
         val adds = (1..25).map { SyncKey.of("ja", "追加語$it", "よみ$it") }

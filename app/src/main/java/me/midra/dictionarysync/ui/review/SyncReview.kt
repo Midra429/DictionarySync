@@ -18,13 +18,15 @@ import androidx.compose.ui.window.DialogProperties
 import me.midra.dictionarysync.R
 import me.midra.dictionarysync.data.local.SourceEntity
 import me.midra.dictionarysync.sync.SyncKey
+import me.midra.dictionarysync.sync.PlanPurpose
+import me.midra.dictionarysync.sync.PlanState
 import me.midra.dictionarysync.sync.SyncPreview
 import me.midra.dictionarysync.ui.common.*
 import me.midra.dictionarysync.ui.sources.Tone
 
 @Composable
 fun SyncReviewDialog(preview: SyncPreview, busy: Boolean, sources: List<SourceEntity>, close: () -> Unit,
-    cancel: () -> Unit, apply: () -> Unit, recovery: (String) -> Unit) {
+    cancel: () -> Unit, apply: () -> Unit, recovery: (PlanPurpose) -> Unit) {
     // Saved outside the dialog window so the search survives recreation.
     val query = rememberSaveable(preview.plan.id) { mutableStateOf("") }
     Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
@@ -36,7 +38,7 @@ fun SyncReviewDialog(preview: SyncPreview, busy: Boolean, sources: List<SourceEn
 @OptIn(ExperimentalMaterial3ExpressiveApi::class, ExperimentalMaterial3Api::class)
 @Composable
 internal fun SyncReview(preview: SyncPreview, busy: Boolean, sources: List<SourceEntity>, close: () -> Unit,
-    cancel: () -> Unit, apply: () -> Unit, recovery: (String) -> Unit,
+    cancel: () -> Unit, apply: () -> Unit, recovery: (PlanPurpose) -> Unit,
     queryState: MutableState<String> = rememberSaveable(preview.plan.id) { mutableStateOf("") }) {
     val plan = preview.plan
     val purpose = plan.purpose
@@ -46,15 +48,15 @@ internal fun SyncReview(preview: SyncPreview, busy: Boolean, sources: List<Sourc
     val additions = remember(preview, query) { preview.additions.filter { query in it.word || query in it.shortcut.orEmpty() } }
     val removed = remember(preview, query) { preview.removed.filter { query in it.word || query in it.shortcut.orEmpty() } }
     val deletes = remember(preview) { preview.ownedDeletes.map { it.id }.toSet() }
-    val blocked = purpose == "RESYNC" && preview.blockers.isNotEmpty()
+    val blocked = purpose == PlanPurpose.RESYNC && preview.blockers.isNotEmpty()
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(when (purpose) {
-                    "RESYNC" -> R.string.review_title_resync
-                    "COMPENSATE" -> R.string.review_title_compensate
-                    "REMOVE_SOURCE" -> R.string.review_title_remove
-                    else -> R.string.review_title_apply
+                    PlanPurpose.RESYNC -> R.string.review_title_resync
+                    PlanPurpose.COMPENSATE -> R.string.review_title_compensate
+                    PlanPurpose.REMOVE_SOURCE -> R.string.review_title_remove
+                    PlanPurpose.APPLY -> R.string.review_title_apply
                 })) },
                 navigationIcon = { IconButton(onClick = close) { Icon(AppIcons.Close, stringResource(R.string.action_close)) } },
             )
@@ -67,10 +69,10 @@ internal fun SyncReview(preview: SyncPreview, busy: Boolean, sources: List<Sourc
                     Button(onClick = apply, enabled = !busy && !blocked) {
                         if (busy) LoadingIndicator(Modifier.size(24.dp), color = LocalContentColor.current)
                         else Text(stringResource(when (purpose) {
-                            "RESYNC" -> R.string.review_apply_resync
-                            "COMPENSATE" -> R.string.review_apply_compensate
-                            "REMOVE_SOURCE" -> R.string.review_apply_remove
-                            else -> R.string.review_apply_apply
+                            PlanPurpose.RESYNC -> R.string.review_apply_resync
+                            PlanPurpose.COMPENSATE -> R.string.review_apply_compensate
+                            PlanPurpose.REMOVE_SOURCE -> R.string.review_apply_remove
+                            PlanPurpose.APPLY -> R.string.review_apply_apply
                         }))
                     }
                 }
@@ -86,18 +88,18 @@ internal fun SyncReview(preview: SyncPreview, busy: Boolean, sources: List<Sourc
                     Stat(R.string.review_stat_add, preview.additions.size)
                     Stat(R.string.review_stat_release, preview.removed.size)
                     Stat(R.string.review_stat_delete, preview.ownedDeletes.size)
-                    if (purpose == "APPLY") Stat(R.string.review_stat_shared, preview.shared)
+                    if (purpose == PlanPurpose.APPLY) Stat(R.string.review_stat_shared, preview.shared)
                     Stat(R.string.review_stat_protected, preview.protected)
                 }
             }
             plan.error?.let { code ->
                 item(key = "error") { Banner(Tone.Problem, reasonText(code), stringResource(R.string.error_code, code)) }
             }
-            if (purpose != "APPLY") {
+            if (purpose.recovery) {
                 item(key = "detail") {
                     Text(stringResource(when (purpose) {
-                        "RESYNC" -> R.string.review_resync_detail
-                        "REMOVE_SOURCE" -> R.string.review_remove_detail
+                        PlanPurpose.RESYNC -> R.string.review_resync_detail
+                        PlanPurpose.REMOVE_SOURCE -> R.string.review_remove_detail
                         else -> R.string.review_compensate_detail
                     }), style = MaterialTheme.typography.bodyLarge)
                 }
@@ -107,13 +109,13 @@ internal fun SyncReview(preview: SyncPreview, busy: Boolean, sources: List<Sourc
                         stringResource(R.string.review_blockers_detail))
                 }
             }
-            if (purpose == "APPLY" && plan.approved && plan.state == "RECOVERY_REQUIRED") {
+            if (purpose == PlanPurpose.APPLY && plan.approved && plan.state == PlanState.RECOVERY_REQUIRED) {
                 item(key = "choose") { Text(stringResource(R.string.review_choose), style = MaterialTheme.typography.bodyLarge) }
                 item(key = "resync") {
-                    RecoveryOption(stringResource(R.string.review_open_resync), stringResource(R.string.review_resync_detail), !busy) { recovery("RESYNC") }
+                    RecoveryOption(stringResource(R.string.review_open_resync), stringResource(R.string.review_resync_detail), !busy) { recovery(PlanPurpose.RESYNC) }
                 }
                 item(key = "compensate") {
-                    RecoveryOption(stringResource(R.string.review_open_compensate), stringResource(R.string.review_compensate_detail), !busy) { recovery("COMPENSATE") }
+                    RecoveryOption(stringResource(R.string.review_open_compensate), stringResource(R.string.review_compensate_detail), !busy) { recovery(PlanPurpose.COMPENSATE) }
                 }
             }
             item(key = "notes") {

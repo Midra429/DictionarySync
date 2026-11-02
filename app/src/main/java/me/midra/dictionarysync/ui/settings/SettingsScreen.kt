@@ -20,16 +20,15 @@ import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import me.midra.dictionarysync.R
-import me.midra.dictionarysync.library.LibraryViewModel
 import me.midra.dictionarysync.sync.SyncReadiness
 import me.midra.dictionarysync.ui.common.*
 import me.midra.dictionarysync.ui.sources.Tone
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class, ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(model: LibraryViewModel, onOpenDiagnostics: () -> Unit) {
+fun SettingsScreen(model: SettingsState, operations: Operations, onOpenDiagnostics: () -> Unit) {
     val wifi by model.wifiOnly.collectAsStateWithLifecycle()
-    val busy by model.busy.collectAsStateWithLifecycle()
+    val busy by operations.busy.collectAsStateWithLifecycle()
     val readiness by model.readiness.collectAsStateWithLifecycle()
     val batteryOptimized by model.batteryOptimized.collectAsStateWithLifecycle()
     val notificationsEnabled by model.notificationsEnabled.collectAsStateWithLifecycle()
@@ -48,7 +47,7 @@ fun SettingsScreen(model: LibraryViewModel, onOpenDiagnostics: () -> Unit) {
                 item { SectionHeader(stringResource(R.string.settings_section_sync)) }
                 item {
                     // One switch control for TalkBack: the whole row toggles, the Switch itself is decorative.
-                    SegmentedListItem(onClick = { model.wifiOnly(!wifi) }, shapes = ListItemDefaults.segmentedShapes(0, 2), enabled = !busy,
+                    SegmentedListItem(onClick = { model.setWifiOnly(!wifi) }, shapes = ListItemDefaults.segmentedShapes(0, 2), enabled = !busy,
                         colors = settingsItemColors(),
                         modifier = Modifier.semantics { role = Role.Switch; toggleableState = ToggleableState(wifi) },
                         leadingContent = { Icon(AppIcons.Wifi, contentDescription = null) },

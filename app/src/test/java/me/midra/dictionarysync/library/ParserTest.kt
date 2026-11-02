@@ -79,8 +79,8 @@ class ParserTest {
     }
     @Test fun reorderedEntriesHaveSameContentDigestButMetadataChangesDoNot() {
         val a = parse("a\tb\tc\nq\tw\te").entries
-        assertEquals(LibraryRepository.contentHash(a), LibraryRepository.contentHash(a.reversed()))
-        assertNotEquals(LibraryRepository.contentHash(a), LibraryRepository.contentHash(a.map { it.copy(comment = "changed") }))
+        assertEquals(SnapshotStore.contentHash(a), SnapshotStore.contentHash(a.reversed()))
+        assertNotEquals(SnapshotStore.contentHash(a), SnapshotStore.contentHash(a.map { it.copy(comment = "changed") }))
     }
     @Test fun urlsPreserveQueryOrderingDuplicatesAndEscapes() {
         val url = "https://example.org/dictionary?a=1&a=2&b=%2f+%20"
@@ -92,13 +92,13 @@ class ParserTest {
     }
     @Test fun declaredLanguagesApplyPerEntryOnlyUnderAuto() {
         val gboard = parse("# Gboard Dictionary version:1\nよみ\t語\tfr-CA\nよみ\t語\ten-CA\nよみ\t語\t").entries
-        assertEquals(listOf("fr-CA", "en-CA", "ALL"), LibraryRepository.resolved(gboard, "AUTO").map { it.locale })
-        assertEquals(listOf("ja", "ja", "ja"), LibraryRepository.resolved(gboard, "ja").map { it.locale })
-        assertEquals(listOf("ja"), LibraryRepository.resolved(parse("よみ\t語\t名詞").entries, "AUTO").map { it.locale })
+        assertEquals(listOf("fr-CA", "en-CA", "ALL"), SnapshotStore.resolved(gboard, "AUTO").map { it.locale })
+        assertEquals(listOf("ja", "ja", "ja"), SnapshotStore.resolved(gboard, "ja").map { it.locale })
+        assertEquals(listOf("ja"), SnapshotStore.resolved(parse("よみ\t語\t名詞").entries, "AUTO").map { it.locale })
         // Same word and reading in different languages are different shared-dictionary keys.
-        assertEquals(3, LibraryRepository.uniqueCount(LibraryRepository.resolved(gboard, "AUTO")))
-        assertEquals(1, LibraryRepository.uniqueCount(LibraryRepository.resolved(gboard, "ja")))
-        assertNotEquals(LibraryRepository.contentHash(LibraryRepository.resolved(gboard, "AUTO")), LibraryRepository.contentHash(LibraryRepository.resolved(gboard, "ja")))
+        assertEquals(3, SnapshotStore.uniqueCount(SnapshotStore.resolved(gboard, "AUTO")))
+        assertEquals(1, SnapshotStore.uniqueCount(SnapshotStore.resolved(gboard, "ja")))
+        assertNotEquals(SnapshotStore.contentHash(SnapshotStore.resolved(gboard, "AUTO")), SnapshotStore.contentHash(SnapshotStore.resolved(gboard, "ja")))
     }
     @Test fun localeAndLiteralSearchAreExplicit() {
         assertEquals("ja-JP", SourceRules.locale("ja-jp")); assertEquals("ALL", SourceRules.locale("ALL"))

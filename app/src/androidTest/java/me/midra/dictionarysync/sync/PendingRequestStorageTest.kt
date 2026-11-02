@@ -10,11 +10,15 @@ import kotlinx.coroutines.*
 import me.midra.dictionarysync.data.local.*
 import me.midra.dictionarysync.data.parser.DictionaryProblem
 import me.midra.dictionarysync.data.source.*
-import me.midra.dictionarysync.library.LibraryRepository
+import me.midra.dictionarysync.AppContainer
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.fetchAll
+import me.midra.dictionarysync.fetch
+import me.midra.dictionarysync.resumePendingFetches
 
 /** Synthetic HTTP and independent Room databases only. No shared UserDictionary operations. */
 @RunWith(AndroidJUnit4::class)
@@ -22,7 +26,7 @@ class PendingRequestStorageTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private fun memory() = Room.inMemoryDatabaseBuilder(context, DictionaryDatabase::class.java).build()
     private fun library(db: DictionaryDatabase, response: (String) -> String = { "よみ\t永続合成語\t名詞" }) =
-        LibraryRepository(context, db) { url, _, _ ->
+        testApp(context, db) { url, _, _ ->
             val bytes = response(url).toByteArray()
             Download(bytes, Downloader.sha256(bytes), url, "text/plain")
         }
@@ -37,14 +41,14 @@ class PendingRequestStorageTest {
             val first = queue.submit(listOf("A"), FetchReason.MANUAL, now = 10).single()
             val second = queue.submit(listOf("A", "A"), FetchReason.ALL_SOURCES, now = 11).single()
             assertEquals(2L, second.generation); assertEquals(3, second.reasons)
-            assertTrue(queue.finish(first, "FETCHED", now = 12))
+            assertTrue(queue.finish(first, FetchOutcome.FETCHED, now = 12))
             val pending = db.requests().pending().single()
             assertEquals(2L, pending.generation); assertEquals(1L, pending.completedGeneration)
-            assertFalse(queue.finish(first, "FETCH_FAILED"))
-            assertFalse(queue.finish(second.copy(generation = 3), "FETCHED"))
-            assertTrue(queue.finish(second, "FETCH_FAILED", "synthetic", now = 13))
+            assertFalse(queue.finish(first, FetchOutcome.FETCH_FAILED))
+            assertFalse(queue.finish(second.copy(generation = 3), FetchOutcome.FETCHED))
+            assertTrue(queue.finish(second, FetchOutcome.FETCH_FAILED, "synthetic", now = 13))
             assertTrue(db.requests().pending().isEmpty())
-            assertEquals("FETCH_FAILED", db.requests().request("A")!!.outcome)
+            assertEquals(FetchOutcome.FETCH_FAILED, db.requests().request("A")!!.outcome)
             val third = queue.submit(listOf("A"), FetchReason.MANUAL).single()
             assertEquals(3L, third.generation); assertEquals(1, third.reasons)
         } finally { db.close() }
@@ -57,7 +61,7 @@ class PendingRequestStorageTest {
             val old = queue.submit(listOf("A"), FetchReason.MANUAL).single()
             db.library().updateSource(db.library().source("A")!!.copy(revision = 2))
             val new = queue.submit(listOf("A"), FetchReason.MANUAL).single()
-            assertFalse(queue.finish(old, "FETCHED")); assertFalse(queue.defer(old, "WIFI_WAIT", 9999))
+            assertFalse(queue.finish(old, FetchOutcome.FETCHED)); assertFalse(queue.defer(old, WaitReason.WIFI_WAIT, 9999))
             assertEquals(new, db.requests().request("A"))
             assertTrue(queue.isCurrent(new)); assertFalse(queue.isCurrent(old))
         } finally { db.close() }
@@ -69,12 +73,12 @@ class PendingRequestStorageTest {
             source(db); val queue = PendingRequests(db)
             val first = queue.submit(listOf("A"), FetchReason.MANUAL, notBefore = 1000, now = 10).single()
             assertTrue(queue.ready(999).isEmpty()); assertFalse(queue.isCurrent(first, 999))
-            assertTrue(queue.defer(first, "NETWORK_WAIT", 2000))
+            assertTrue(queue.defer(first, WaitReason.NETWORK_WAIT, 2000))
             val second = queue.submit(listOf("A"), FetchReason.MANUAL, notBefore = 0, now = 11).single()
             assertEquals(2000L, second.notBefore); assertTrue(queue.ready(1999).isEmpty())
-            assertFalse(queue.defer(first, "stale", 9000))
-            assertTrue(queue.finish(first, "FETCHED"))
-            assertEquals("NETWORK_WAIT", db.requests().request("A")!!.waitReason)
+            assertFalse(queue.defer(first, WaitReason.WIFI_WAIT, 9000)) // A superseded generation is never deferred.
+            assertTrue(queue.finish(first, FetchOutcome.FETCHED))
+            assertEquals(WaitReason.NETWORK_WAIT, db.requests().request("A")!!.waitReason)
             assertEquals(2L, queue.ready(2000).single().generation)
         } finally { db.close() }
     }
@@ -99,7 +103,7 @@ class PendingRequestStorageTest {
             var calls = 0
             val repo = library(db) { calls++; "よみ\t永続合成語\t名詞" }
             repo.resumePendingFetches(); repo.resumePendingFetches()
-            assertEquals(1, calls); assertEquals("FETCHED", db.requests().request("A")!!.outcome)
+            assertEquals(1, calls); assertEquals(FetchOutcome.FETCHED, db.requests().request("A")!!.outcome)
             assertEquals(1L, db.requests().request("A")!!.completedGeneration)
             assertNotNull(db.library().source("A")!!.latestSnapshot)
             assertNull(db.library().source("A")!!.activeSnapshot)
@@ -137,11 +141,11 @@ class PendingRequestStorageTest {
             val repo = library(db) { throw CancellationException("synthetic process loss") }
             try { repo.fetchAll(); fail() } catch (_: CancellationException) { }
             assertEquals(2, db.requests().pending().size)
-            assertEquals("FETCHING", db.library().source("A")!!.state)
+            assertEquals(FetchState.FETCHING, db.library().source("A")!!.state)
             val calls = mutableListOf<String>()
             library(db) { calls += it; "よみ\t永続合成語\t名詞" }.resumePendingFetches()
             assertEquals(2, calls.size); assertTrue(db.requests().pending().isEmpty())
-            assertEquals(2, db.library().sources().count { it.state == "FETCHED" })
+            assertEquals(2, db.library().sources().count { it.state == FetchState.FETCHED })
         } finally { db.close() }
     }
 
@@ -170,11 +174,11 @@ class PendingRequestStorageTest {
             }
             repo.fetch("A"); val old = db.library().source("A")!!
             mode = "wait"; repo.fetch("A")
-            assertEquals("WIFI_WAIT", db.requests().pending().single().waitReason)
+            assertEquals(WaitReason.WIFI_WAIT, db.requests().pending().single().waitReason)
             assertEquals(1L, db.requests().request("A")!!.completedGeneration)
-            assertEquals("NETWORK_WAIT", db.library().source("A")!!.state)
+            assertEquals(FetchState.NETWORK_WAIT, db.library().source("A")!!.state)
             mode = "bad"; repo.resumePendingFetches()
-            assertTrue(db.requests().pending().isEmpty()); assertEquals("FETCH_FAILED", db.requests().request("A")!!.outcome)
+            assertTrue(db.requests().pending().isEmpty()); assertEquals(FetchOutcome.FETCH_FAILED, db.requests().request("A")!!.outcome)
             assertEquals(old.latestSnapshot, db.library().source("A")!!.latestSnapshot)
             assertEquals(old.fetchedAt, db.library().source("A")!!.fetchedAt)
             assertNull(db.library().source("A")!!.activeSnapshot)
@@ -188,14 +192,14 @@ class PendingRequestStorageTest {
             val queue = PendingRequests(db)
             queue.submit(listOf("A", "B", "C"), FetchReason.ALL_SOURCES)
             db.library().updateSource(db.library().source("A")!!.copy(revision = 2))
-            db.library().updateSource(db.library().source("B")!!.copy(lifecycle = "DELETE_PENDING"))
+            db.library().updateSource(db.library().source("B")!!.copy(lifecycle = SourceLifecycle.DELETE_PENDING))
             db.library().deleteSource("C")
             var calls = 0
             library(db) { calls++; "よみ\t永続合成語\t名詞" }.resumePendingFetches()
             assertEquals(0, calls); assertTrue(db.requests().pending().isEmpty())
-            assertEquals("SETTINGS_CHANGED", db.requests().request("A")!!.outcome)
-            assertEquals("SOURCE_REMOVED", db.requests().request("B")!!.outcome)
-            assertEquals("SOURCE_REMOVED", db.requests().request("C")!!.outcome)
+            assertEquals(FetchOutcome.SETTINGS_CHANGED, db.requests().request("A")!!.outcome)
+            assertEquals(FetchOutcome.SOURCE_REMOVED, db.requests().request("B")!!.outcome)
+            assertEquals(FetchOutcome.SOURCE_REMOVED, db.requests().request("C")!!.outcome)
         } finally { db.close() }
     }
 
@@ -206,9 +210,9 @@ class PendingRequestStorageTest {
             try { repo.requests.submit(listOf("A", "missing"), FetchReason.ALL_SOURCES); fail() } catch (_: SyncStopped) { }
             assertNull(db.requests().request("A"))
             repo.requests.submit(listOf("A"), FetchReason.MANUAL)
-            repo.deleteLocal("A")
-            assertTrue(db.requests().pending().isEmpty()); assertEquals("SOURCE_REMOVED", db.requests().request("A")!!.outcome)
-            assertNull(db.library().source("A"))
+            assertTrue(repo.sourceSync.delete("A")) // Never applied: deleted without the Provider.
+            assertTrue(db.requests().pending().isEmpty()); assertEquals(FetchOutcome.SOURCE_REMOVED, db.requests().request("A")!!.outcome)
+            assertEquals(SourceLifecycle.DELETED, db.library().source("A")!!.lifecycle)
         } finally { db.close() }
     }
 }

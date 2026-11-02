@@ -11,15 +11,15 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import me.midra.dictionarysync.library.LibraryViewModel
 import me.midra.dictionarysync.probe.ProbeViewModel
+import me.midra.dictionarysync.ui.AppViewModel
 import me.midra.dictionarysync.ui.DictionarySyncApp
 import me.midra.dictionarysync.ui.diagnostics.DiagnosticsScreen
 import me.midra.dictionarysync.ui.theme.DictionarySyncTheme
 
 class MainActivity : ComponentActivity() {
     private val probe: ProbeViewModel by viewModels()
-    private val library: LibraryViewModel by viewModels()
+    private val model: AppViewModel by viewModels()
 
     override fun onResume() {
         super.onResume()
@@ -32,9 +32,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             DictionarySyncTheme {
                 // Nothing is drawn for the one frame before the setting is read, so neither screen flashes.
-                val setupDone by library.setupDone.collectAsStateWithLifecycle()
+                val setupDone by model.settings.setupDone.collectAsStateWithLifecycle()
                 setupDone?.let { done ->
-                    DictionarySyncApp(library, setup = !done) { onBack ->
+                    DictionarySyncApp(model, setup = !done) { onBack ->
                         DiagnosticsScreen(probe, onBack,
                             onOpenSettings = { openSettings(Settings.ACTION_USER_DICTIONARY_SETTINGS) },
                             onOpenImeSettings = { openSettings(Settings.ACTION_INPUT_METHOD_SETTINGS) })

@@ -18,7 +18,7 @@ class SourceFormUiTest {
     @get:Rule val compose = createComposeRule()
     @Test fun newFormatsCanBeExplicitlySelectedAndSaved() {
         var saved: String? = null
-        compose.setContent { DictionarySyncTheme { SourceForm(SourceEntity("A", "合成", "https://example.org/a"), false, {}) { _, _, _, format, _, _ -> saved = format } } }
+        compose.setContent { DictionarySyncTheme { SourceForm(SourceEntity("A", "合成", "https://example.org/a"), false, {}) { saved = it.format } } }
         val format = compose.onNode(hasText("形式", substring = false) and hasClickAction())
         format.performScrollTo().assertTextContains("自動").performClick()
         compose.onNode(hasText("Apple XML plist") and hasAnyAncestor(isPopup())).performClick()
@@ -31,8 +31,8 @@ class SourceFormUiTest {
         var result: List<Any>? = null
         val restoration = StateRestorationTester(compose)
         restoration.setContent { DictionarySyncTheme {
-            SourceForm(SourceEntity("A", "合成", "https://example.org/a", locale = "ja"), false, {}) { name, url, locale, format, encoding, hours ->
-                result = listOf(name, url, locale, format, encoding, hours)
+            SourceForm(SourceEntity("A", "合成", "https://example.org/a", locale = "ja"), false, {}) { draft ->
+                result = with(draft) { listOf(name, url, locale, format, encoding, syncIntervalHours) }
             }
         } }
         fun field(label: String) = compose.onNode(hasText(label, substring = false) and hasClickAction())

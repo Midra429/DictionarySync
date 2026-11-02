@@ -25,6 +25,12 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import me.midra.dictionarysync.data.local.SourceLifecycle
+import me.midra.dictionarysync.data.local.SyncState
+import me.midra.dictionarysync.save
+import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.AppContainer
+import me.midra.dictionarysync.ui.AppViewModel
 
 /** Production screen/VM in the test Activity, dedicated ledger, no OS work or real downloads. */
 @RunWith(AndroidJUnit4::class)
@@ -111,29 +117,31 @@ class ProviderBatchUiAcceptanceTest {
             for (source in sources) {
                 val entries = db.library().entries(requireNotNull(source.latestSnapshot))
                 check(entries.size == 2 && entries.map { SyncKey.of("ja", it.word, it.reading) }.toSet() == expected)
-                if (source.lifecycle != "DELETED") assertTrue(sync(db, gateway).delete(source.id))
+                if (source.lifecycle != SourceLifecycle.DELETED) assertTrue(sync(db, gateway).delete(source.id))
             }
             assertTrue(gateway.find(key).isEmpty())
             assertTrue(db.sync().references().isEmpty())
-            assertTrue(db.library().allSources().all { it.lifecycle == "DELETED" })
+            assertTrue(db.library().allSources().all { it.lifecycle == SourceLifecycle.DELETED })
             AndroidProbeGateway(context.contentResolver).use { probe ->
                 assertEquals(baseline.readText(), WriteProbe.fingerprint(probe.snapshot()))
             }
-            report("CLEANED: known trial sources deleted through SyncRepository; baseline restored; history retained")
+            report("CLEANED: known trial sources deleted through SourceSync; baseline restored; history retained")
         } finally { db.close() }
     }
 
     private fun scenario(db: DictionaryDatabase, gateway: LimitedGateway, witness: ProbeRow, checkWholeProvider: () -> Unit = {}) {
         val sync = sync(db, gateway)
         val borrowed = SyncKey.from(witness)!!
-        val repo = LibraryRepository(context, db, synchronizeSource = { sync.synchronize(it) }) { url, _, _ ->
+        lateinit var repo: AppContainer
+        val dispatch = InlineApplyDispatch { repo.applies }
+        repo = testApp(context, db, sync = sync, dispatch = dispatch) { url, _, _ ->
             check(url in urls)
             val bytes = listOf(key, borrowed).joinToString("\n") { "${it.shortcut.orEmpty()}\t${it.word}\t名詞" }.toByteArray()
             Download(bytes, Downloader.sha256(bytes), url, "text/plain; charset=utf-8")
         }
         val ids = runBlocking {
-            urls.mapIndexed { index, url -> repo.save(null, names[index], url, "AUTO", "AUTO", "AUTO") }.also {
-                val runner = FetchRunner(repo)
+            urls.mapIndexed { index, url -> repo.editor.save(null, names[index], url, "AUTO", "AUTO", "AUTO") }.also {
+                val runner = repo.fetchRunner
                 runner.runOne(); runner.runOne()
             }
         }
@@ -142,17 +150,17 @@ class ProviderBatchUiAcceptanceTest {
         assertEquals(1, gateway.inserts)
         checkWholeProvider()
         val store = ViewModelStore()
-        lateinit var model: LibraryViewModel
+        lateinit var model: AppViewModel
         try {
             compose.runOnUiThread {
-                model = LibraryViewModel(context.applicationContext as Application, SavedStateHandle(), repo, sync, InlineApplyDispatch { repo })
+                model = AppViewModel(context.applicationContext as Application, SavedStateHandle(), repo)
                 store.put("provider-batch-ui", model)
             }
             compose.setContent { DictionarySyncTheme { DictionarySyncApp(model) {} } }
-            compose.waitUntil(10_000) { !model.busy.value && model.sources.value.size == 2 }
+            compose.waitUntil(10_000) { !model.operations.busy.value && model.sources.sources.value.size == 2 }
             select(ids, enter = true)
             compose.onNodeWithText("無効化", substring = false).performClick()
-            waitFor(model) { ids.all { db.library().source(it)!!.let { source -> !source.enabled && source.syncState == "REMOVED" } } }
+            waitFor(model) { ids.all { db.library().source(it)!!.let { source -> !source.enabled && source.syncState == SyncState.REMOVED } } }
             assertTrue(gateway.find(key).isEmpty())
             assertEquals(witness, gateway.byId(witness.id))
             runBlocking {
@@ -164,7 +172,7 @@ class ProviderBatchUiAcceptanceTest {
             checkWholeProvider()
             select(ids, enter = false)
             compose.onNodeWithText("有効化", substring = false).performClick()
-            waitFor(model) { ids.all { db.library().source(it)!!.syncState == "SYNCED" } }
+            waitFor(model) { ids.all { db.library().source(it)!!.syncState == SyncState.SYNCED } }
             assertApplied(db, gateway, witness, ids)
             assertEquals(2, gateway.inserts)
             checkWholeProvider()
@@ -172,7 +180,7 @@ class ProviderBatchUiAcceptanceTest {
             compose.onNodeWithText("削除", substring = false).performClick()
             compose.onNodeWithText("2件のソースを削除しますか？").assertIsDisplayed()
             compose.onNode(hasText("削除", substring = false) and hasAnyAncestor(isDialog())).performClick()
-            waitFor(model) { ids.all { db.library().source(it)!!.lifecycle == "DELETED" } }
+            waitFor(model) { ids.all { db.library().source(it)!!.lifecycle == SourceLifecycle.DELETED } }
             compose.onNodeWithText("2件のソースを削除しますか？", substring = true).assertDoesNotExist()
             assertTrue(gateway.find(key).isEmpty())
             assertEquals(witness, gateway.byId(witness.id))
@@ -182,7 +190,7 @@ class ProviderBatchUiAcceptanceTest {
                 assertTrue(ids.all { db.library().source(it)!!.activeSnapshot == null })
                 assertEquals(snapshots, ids.map { db.library().source(it)!!.latestSnapshot })
                 assertEquals(8, db.sync().plans().size)
-                assertTrue(db.sync().plans().all { it.state == "COMMITTED" })
+                assertTrue(db.sync().plans().all { it.state == PlanState.COMMITTED })
             }
             checkWholeProvider()
             report("SCREEN COMPLETE: 2 selected sources; disable/enable/delete each success2 failure0; one shared OWNED + borrowed witness; INSERT2 DELETE2; COMMITTED8; references0")
@@ -193,10 +201,10 @@ class ProviderBatchUiAcceptanceTest {
         assertEquals(1, gateway.find(key).size)
         assertEquals(witness, gateway.byId(witness.id))
         runBlocking {
-            assertTrue(ids.all { db.library().source(it)!!.let { source -> source.enabled && source.syncState == "SYNCED" && source.activeSnapshot == source.latestSnapshot } })
+            assertTrue(ids.all { db.library().source(it)!!.let { source -> source.enabled && source.syncState == SyncState.SYNCED && source.activeSnapshot == source.latestSnapshot } })
             assertEquals(4, db.sync().references().size)
-            assertEquals(1, db.sync().bindings().count { it.ownership == "OWNED" })
-            assertEquals(1, db.sync().bindings().count { it.ownership == "BORROWED" })
+            assertEquals(1, db.sync().bindings().count { it.ownership == Ownership.OWNED })
+            assertEquals(1, db.sync().bindings().count { it.ownership == Ownership.BORROWED })
         }
     }
 
@@ -212,13 +220,13 @@ class ProviderBatchUiAcceptanceTest {
         compose.onNodeWithText("2件選択中").assertExists()
     }
 
-    private fun waitFor(model: LibraryViewModel, predicate: suspend () -> Boolean) {
-        compose.waitUntil(20_000) { !model.busy.value && runBlocking { predicate() } }
+    private fun waitFor(model: AppViewModel, predicate: suspend () -> Boolean) {
+        compose.waitUntil(20_000) { !model.operations.busy.value && runBlocking { predicate() } }
         compose.waitUntil(10_000) { compose.onAllNodesWithText("2件を受け付けました", substring = true).fetchSemanticsNodes().isNotEmpty() }
-        assertNull(model.error.value)
-        assertTrue(model.selection.value.isEmpty())
+        assertNull(model.operations.error.value)
+        assertTrue(model.sources.selection.value.isEmpty())
     }
-    private fun sync(db: DictionaryDatabase, gateway: SyncGateway) = SyncRepository(context, db) {
+    private fun sync(db: DictionaryDatabase, gateway: SyncGateway) = SourceSync(context, db) {
         SyncEngine(RoomSyncStore(db), gateway, SyncCoordinator.installation(context))
     }
     private fun openLedger() = Room.databaseBuilder(context, DictionaryDatabase::class.java, ledger.absolutePath).build()

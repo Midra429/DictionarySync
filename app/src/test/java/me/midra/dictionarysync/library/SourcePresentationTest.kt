@@ -6,7 +6,11 @@ import org.junit.Test
 import me.midra.dictionarysync.data.local.SourceEntity
 import me.midra.dictionarysync.data.source.SourceRules
 import me.midra.dictionarysync.sync.PendingRequest
+import me.midra.dictionarysync.sync.WaitReason
 import me.midra.dictionarysync.ui.sources.*
+import me.midra.dictionarysync.data.local.FetchState
+import me.midra.dictionarysync.data.local.SourceLifecycle
+import me.midra.dictionarysync.data.local.SyncState
 
 class SourcePresentationTest {
     private val now = 1_800_000_000_000L
@@ -31,32 +35,32 @@ class SourcePresentationTest {
     }
 
     private fun source(vararg changes: (SourceEntity) -> SourceEntity) =
-        changes.fold(SourceEntity("A", "名前", "https://example.org/a", latestSnapshot = "s", activeSnapshot = "s", state = "FETCHED", syncState = "SYNCED")) { s, f -> f(s) }
-    private fun request(notBefore: Long = 0, waitReason: String? = null) = PendingRequest("A", 2, 1, 1, now, notBefore, 1, waitReason = waitReason)
+        changes.fold(SourceEntity("A", "名前", "https://example.org/a", latestSnapshot = "s", activeSnapshot = "s", state = FetchState.FETCHED, syncState = SyncState.SYNCED)) { s, f -> f(s) }
+    private fun request(notBefore: Long = 0, waitReason: WaitReason? = null) = PendingRequest("A", 2, 1, 1, now, notBefore, 1, waitReason = waitReason)
 
     @Test fun oneStatusPerSourceInPriorityOrder() {
         assertEquals(StatusKind.Synced, sourceStatus(source(), null, now).kind)
-        assertEquals(StatusKind.Fetching, sourceStatus(source({ it.copy(state = "FETCHING", syncError = "X") }), null, now).kind)
-        assertEquals(StatusKind.DeletePending, sourceStatus(source({ it.copy(lifecycle = "DELETE_PENDING", state = "FETCHING", syncError = "EXTERNAL_EDIT") }), null, now).kind)
-        assertEquals(StatusKind.Interrupted, sourceStatus(source({ it.copy(syncState = "RECOVERY_REQUIRED", syncError = "INSERT_UNKNOWN") }), null, now).kind)
-        assertEquals(StatusKind.Reflecting, sourceStatus(source({ it.copy(syncState = "ADDING") }), null, now).kind)
-        sourceStatus(source({ it.copy(syncState = "SYNC_FAILED", syncError = "DIAGNOSIS_REQUIRED") }), null, now).let {
+        assertEquals(StatusKind.Fetching, sourceStatus(source({ it.copy(state = FetchState.FETCHING, syncError = "X") }), null, now).kind)
+        assertEquals(StatusKind.DeletePending, sourceStatus(source({ it.copy(lifecycle = SourceLifecycle.DELETE_PENDING, state = FetchState.FETCHING, syncError = "EXTERNAL_EDIT") }), null, now).kind)
+        assertEquals(StatusKind.Interrupted, sourceStatus(source({ it.copy(syncState = SyncState.RECOVERY_REQUIRED, syncError = "INSERT_UNKNOWN") }), null, now).kind)
+        assertEquals(StatusKind.Reflecting, sourceStatus(source({ it.copy(syncState = SyncState.ADDING) }), null, now).kind)
+        sourceStatus(source({ it.copy(syncState = SyncState.SYNC_FAILED, syncError = "DIAGNOSIS_REQUIRED") }), null, now).let {
             assertEquals(StatusKind.ReflectFailed, it.kind); assertEquals("DIAGNOSIS_REQUIRED", it.reason); assertEquals(Tone.Problem, it.tone)
         }
-        sourceStatus(source({ it.copy(state = "FETCH_FAILED", error = "HTTP_404") }), null, now).let {
+        sourceStatus(source({ it.copy(state = FetchState.FETCH_FAILED, error = "HTTP_404") }), null, now).let {
             assertEquals(StatusKind.FetchFailed, it.kind); assertEquals("HTTP_404", it.reason); assertEquals(Tone.Attention, it.tone)
         }
         assertEquals(StatusKind.Queued, sourceStatus(source(), request(), now).kind)
-        sourceStatus(source({ it.copy(state = "FETCH_RETRY", error = "HTTP_503") }), request(now + 60_000, "HTTP_RETRY"), now).let {
+        sourceStatus(source({ it.copy(state = FetchState.FETCH_RETRY, error = "HTTP_503") }), request(now + 60_000, WaitReason.HTTP_RETRY), now).let {
             assertEquals(StatusKind.RetryWait, it.kind); assertEquals(now + 60_000, it.until)
         }
-        assertEquals(StatusKind.NetworkWait, sourceStatus(source({ it.copy(state = "NETWORK_WAIT", error = "WIFI_WAIT") }), request(), now).kind)
-        assertEquals(StatusKind.ReflectQueued, sourceStatus(source({ it.copy(syncState = "UPDATE_PENDING") }), null, now).kind)
-        assertEquals(StatusKind.ReflectPending, sourceStatus(source({ it.copy(syncState = "NOT_SYNCED") }), null, now).kind)
-        assertEquals(StatusKind.Deleting, sourceStatus(source({ it.copy(lifecycle = "DELETE_PENDING", syncState = "REMOVE_PENDING") }), null, now).kind)
-        assertEquals(StatusKind.Disabled, sourceStatus(source({ it.copy(enabled = false, activeSnapshot = null, syncState = "REMOVED") }), null, now).kind)
-        assertEquals(StatusKind.ReleasePending, sourceStatus(source({ it.copy(enabled = false, syncState = "REMOVE_PENDING") }), null, now).kind)
-        assertEquals(StatusKind.NotFetched, sourceStatus(source({ it.copy(latestSnapshot = null, activeSnapshot = null, state = "NOT_FETCHED", syncState = "NOT_SYNCED") }), null, now).kind)
+        assertEquals(StatusKind.NetworkWait, sourceStatus(source({ it.copy(state = FetchState.NETWORK_WAIT, error = "WIFI_WAIT") }), request(), now).kind)
+        assertEquals(StatusKind.ReflectQueued, sourceStatus(source({ it.copy(syncState = SyncState.UPDATE_PENDING) }), null, now).kind)
+        assertEquals(StatusKind.ReflectPending, sourceStatus(source({ it.copy(syncState = SyncState.NOT_SYNCED) }), null, now).kind)
+        assertEquals(StatusKind.Deleting, sourceStatus(source({ it.copy(lifecycle = SourceLifecycle.DELETE_PENDING, syncState = SyncState.REMOVE_PENDING) }), null, now).kind)
+        assertEquals(StatusKind.Disabled, sourceStatus(source({ it.copy(enabled = false, activeSnapshot = null, syncState = SyncState.REMOVED) }), null, now).kind)
+        assertEquals(StatusKind.ReleasePending, sourceStatus(source({ it.copy(enabled = false, syncState = SyncState.REMOVE_PENDING) }), null, now).kind)
+        assertEquals(StatusKind.NotFetched, sourceStatus(source({ it.copy(latestSnapshot = null, activeSnapshot = null, state = FetchState.NOT_FETCHED, syncState = SyncState.NOT_SYNCED) }), null, now).kind)
     }
 
     @Test fun reasonsAreGroupedForShortMessages() {
