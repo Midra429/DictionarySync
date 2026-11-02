@@ -2,6 +2,7 @@ package me.midra.dictionarysync.sync
 
 import java.util.UUID
 import me.midra.dictionarysync.data.local.SourceLifecycle
+import me.midra.dictionarysync.data.local.enumOrNull
 
 /** Pinned consent includes source generations, original ownership, all current matches and operation results.
  * It is local recovery history, never a source from which ownership can be inferred. */
@@ -18,7 +19,7 @@ internal data class RecoveryContext(
             val fields = SyncCodec.unpack(value)
             require(fields.size == 6 && fields[0] == "1")
             return RecoveryContext(fields[1]!!, SyncCodec.unpack(fields[2]!!).map { value ->
-                val s = SyncCodec.unpack(value!!); SyncSourceState(s[0]!!, s[1]!!.toLong(), s[2], SourceLifecycle.valueOf(s[3]!!))
+                val s = SyncCodec.unpack(value!!); SyncSourceState(s[0]!!, s[1]!!.toLong(), s[2], enumOrNull(s[3]!!) ?: SourceLifecycle.ACTIVE)
             }, fields[3]!!, SyncCodec.unpack(fields[4]!!).map { it!! }.toSet(),
                 SyncCodec.unpack(fields[5]!!).associate { value -> SyncCodec.unpack(value!!).let { it[0]!! to it[1]!! } })
         }

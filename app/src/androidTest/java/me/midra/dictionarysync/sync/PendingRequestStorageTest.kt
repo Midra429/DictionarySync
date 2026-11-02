@@ -16,6 +16,9 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.fetchAll
+import me.midra.dictionarysync.fetch
+import me.midra.dictionarysync.resumePendingFetches
 
 /** Synthetic HTTP and independent Room databases only. No shared UserDictionary operations. */
 @RunWith(AndroidJUnit4::class)
@@ -99,7 +102,7 @@ class PendingRequestStorageTest {
             db.close(); db = Room.databaseBuilder(context, DictionaryDatabase::class.java, name).build()
             var calls = 0
             val repo = library(db) { calls++; "よみ\t永続合成語\t名詞" }
-            repo.fetcher.resumePending(); repo.fetcher.resumePending()
+            repo.resumePendingFetches(); repo.resumePendingFetches()
             assertEquals(1, calls); assertEquals(FetchOutcome.FETCHED, db.requests().request("A")!!.outcome)
             assertEquals(1L, db.requests().request("A")!!.completedGeneration)
             assertNotNull(db.library().source("A")!!.latestSnapshot)
@@ -118,14 +121,14 @@ class PendingRequestStorageTest {
                 if (calls == 1) { started.countDown(); check(release.await(10, TimeUnit.SECONDS)) }
                 "よみ\t世代$calls\t名詞"
             }
-            val job = async(Dispatchers.IO) { repo.fetcher.fetch("A") }
+            val job = async(Dispatchers.IO) { repo.fetch("A") }
             try {
                 assertTrue(withContext(Dispatchers.IO) { started.await(10, TimeUnit.SECONDS) })
                 repo.requests.submit(listOf("A"), FetchReason.ALL_SOURCES)
             } finally { release.countDown() }
             job.await()
             assertEquals(1, calls); assertEquals(1L, db.requests().pending().single().completedGeneration)
-            repo.fetcher.resumePending()
+            repo.resumePendingFetches()
             assertEquals(2, calls); assertTrue(db.requests().pending().isEmpty())
             assertEquals(2L, db.requests().request("A")!!.completedGeneration)
         } finally { release.countDown(); db.close() }
@@ -136,11 +139,11 @@ class PendingRequestStorageTest {
         try {
             source(db, "A"); source(db, "B")
             val repo = library(db) { throw CancellationException("synthetic process loss") }
-            try { repo.fetcher.fetchAll(); fail() } catch (_: CancellationException) { }
+            try { repo.fetchAll(); fail() } catch (_: CancellationException) { }
             assertEquals(2, db.requests().pending().size)
             assertEquals(FetchState.FETCHING, db.library().source("A")!!.state)
             val calls = mutableListOf<String>()
-            library(db) { calls += it; "よみ\t永続合成語\t名詞" }.fetcher.resumePending()
+            library(db) { calls += it; "よみ\t永続合成語\t名詞" }.resumePendingFetches()
             assertEquals(2, calls.size); assertTrue(db.requests().pending().isEmpty())
             assertEquals(2, db.library().sources().count { it.state == FetchState.FETCHED })
         } finally { db.close() }
@@ -152,11 +155,11 @@ class PendingRequestStorageTest {
             source(db)
             db.openHelper.writableDatabase.execSQL("CREATE TRIGGER fail_request_ack BEFORE UPDATE OF completedGeneration ON pending_requests BEGIN SELECT RAISE(ABORT, 'synthetic ack failure'); END")
             val repo = library(db)
-            try { repo.fetcher.fetch("A"); fail() } catch (_: android.database.SQLException) { }
+            try { repo.fetch("A"); fail() } catch (_: android.database.SQLException) { }
             assertNull(db.library().source("A")!!.latestSnapshot); assertTrue(db.library().snapshotIds("A").isEmpty())
             assertEquals(0L, db.requests().pending().single().completedGeneration)
             db.openHelper.writableDatabase.execSQL("DROP TRIGGER fail_request_ack")
-            repo.fetcher.resumePending()
+            repo.resumePendingFetches()
             assertEquals(1L, db.requests().request("A")!!.completedGeneration)
             assertEquals(1, db.library().snapshotIds("A").size)
         } finally { db.close() }
@@ -169,12 +172,12 @@ class PendingRequestStorageTest {
             val repo = library(db) {
                 when (mode) { "wait" -> throw DictionaryProblem("WIFI_WAIT"); "bad" -> "<html>failure</html>"; else -> "よみ\t永続合成語\t名詞" }
             }
-            repo.fetcher.fetch("A"); val old = db.library().source("A")!!
-            mode = "wait"; repo.fetcher.fetch("A")
+            repo.fetch("A"); val old = db.library().source("A")!!
+            mode = "wait"; repo.fetch("A")
             assertEquals(WaitReason.WIFI_WAIT, db.requests().pending().single().waitReason)
             assertEquals(1L, db.requests().request("A")!!.completedGeneration)
             assertEquals(FetchState.NETWORK_WAIT, db.library().source("A")!!.state)
-            mode = "bad"; repo.fetcher.resumePending()
+            mode = "bad"; repo.resumePendingFetches()
             assertTrue(db.requests().pending().isEmpty()); assertEquals(FetchOutcome.FETCH_FAILED, db.requests().request("A")!!.outcome)
             assertEquals(old.latestSnapshot, db.library().source("A")!!.latestSnapshot)
             assertEquals(old.fetchedAt, db.library().source("A")!!.fetchedAt)
@@ -192,7 +195,7 @@ class PendingRequestStorageTest {
             db.library().updateSource(db.library().source("B")!!.copy(lifecycle = SourceLifecycle.DELETE_PENDING))
             db.library().deleteSource("C")
             var calls = 0
-            library(db) { calls++; "よみ\t永続合成語\t名詞" }.fetcher.resumePending()
+            library(db) { calls++; "よみ\t永続合成語\t名詞" }.resumePendingFetches()
             assertEquals(0, calls); assertTrue(db.requests().pending().isEmpty())
             assertEquals(FetchOutcome.SETTINGS_CHANGED, db.requests().request("A")!!.outcome)
             assertEquals(FetchOutcome.SOURCE_REMOVED, db.requests().request("B")!!.outcome)

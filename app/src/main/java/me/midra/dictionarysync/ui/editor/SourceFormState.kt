@@ -32,7 +32,8 @@ class SourceFormState(private val saved: SavedStateHandle, private val app: AppC
     fun edit(id: String?) { saved[EDITING] = id; saved[OPEN] = true }
     fun dismiss() { saved[OPEN] = false }
 
-    fun save(draft: SourceDraft) { job = operations.run {
+    /** Saves [draft] unless another operation runs; a repeated tap never replaces the running save's [job]. */
+    fun save(draft: SourceDraft) { operations.run {
         try {
             fetching.value = true
             val url = SourceRules.url(draft.url).toString()
@@ -48,7 +49,7 @@ class SourceFormState(private val saved: SavedStateHandle, private val app: AppC
         onSaved(); dismiss()
         // The new generation is written to the shared dictionary by the apply chain, not on this screen.
         app.scheduler.repair(userRequested = true)
-    } }
+    }?.let { job = it } }
 
     /**
      * Abandons the fetch of a save; nothing has been stored yet and the draft stays in the dialog. Only while fetching:

@@ -19,8 +19,11 @@ enum class PlanState {
 
     val terminal get() = this == COMMITTED || this == CANCELLED || this == FAILED_PRESERVED
 
-    /** What the source shows while it has this plan. A commit sets the source's state itself. */
-    val sourceState get() = when (this) {
+    /**
+     * What the source shows while it has this plan. Null for [COMMITTED]: a commit decides the source's state itself
+     * (synced, removed, or a newer generation pending), which the plan's state alone cannot tell.
+     */
+    val sourceState: SyncState? get() = when (this) {
         PREPARED -> SyncState.PREPARED
         ADDING -> SyncState.ADDING
         REMOVING -> SyncState.REMOVING
@@ -28,7 +31,11 @@ enum class PlanState {
         RECOVERING -> SyncState.RECOVERING
         CANCELLED -> SyncState.CANCELLED
         FAILED_PRESERVED -> SyncState.FAILED_PRESERVED
-        COMMITTED -> SyncState.SYNCED
+        COMMITTED -> null
+    }
+
+    companion object {
+        val TERMINAL = entries.filter { it.terminal }
     }
 }
 

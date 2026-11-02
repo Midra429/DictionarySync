@@ -8,47 +8,55 @@ import me.midra.dictionarysync.data.local.SourceEntity
 import me.midra.dictionarysync.data.local.SourceLifecycle
 import me.midra.dictionarysync.data.local.SyncState
 
+/** States are passed as arguments rather than written into the SQL, so the enums stay the one definition. */
 @Dao
-interface SyncDao {
-    @Query("SELECT * FROM entry_keys") suspend fun keys(): List<SyncKey>
-    @Query("SELECT * FROM entry_keys WHERE id IN (:ids)") suspend fun keysById(ids: List<String>): List<SyncKey>
-    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun keys(keys: List<SyncKey>)
-    @Query("SELECT * FROM provider_bindings") suspend fun bindings(): List<ProviderBinding>
-    @Query("SELECT * FROM provider_bindings WHERE keyId IN (:keyIds)") suspend fun bindingsById(keyIds: List<String>): List<ProviderBinding>
-    @Query("SELECT COUNT(*) FROM provider_bindings WHERE ownership='OWNED'") suspend fun ownedCount(): Int
-    @Query("SELECT COUNT(*) FROM provider_bindings WHERE ownership='OWNED' AND keyId IN (:keyIds)") suspend fun ownedCount(keyIds: List<String>): Int
-    @Query("SELECT * FROM provider_bindings WHERE keyId=:keyId") suspend fun binding(keyId: String): ProviderBinding?
+abstract class SyncDao {
+    @Query("SELECT * FROM entry_keys") abstract suspend fun keys(): List<SyncKey>
+    @Query("SELECT * FROM entry_keys WHERE id IN (:ids)") abstract suspend fun keysById(ids: List<String>): List<SyncKey>
+    @Insert(onConflict = OnConflictStrategy.IGNORE) abstract suspend fun keys(keys: List<SyncKey>)
+    @Query("SELECT * FROM provider_bindings") abstract suspend fun bindings(): List<ProviderBinding>
+    @Query("SELECT * FROM provider_bindings WHERE keyId IN (:keyIds)") abstract suspend fun bindingsById(keyIds: List<String>): List<ProviderBinding>
+    @Query("SELECT COUNT(*) FROM provider_bindings WHERE ownership=:ownership")
+    protected abstract suspend fun count(ownership: Ownership): Int
+    @Query("SELECT COUNT(*) FROM provider_bindings WHERE ownership=:ownership AND keyId IN (:keyIds)")
+    protected abstract suspend fun count(ownership: Ownership, keyIds: List<String>): Int
+    suspend fun ownedCount() = count(Ownership.OWNED)
+    suspend fun ownedCount(keyIds: List<String>) = count(Ownership.OWNED, keyIds)
+    @Query("SELECT * FROM provider_bindings WHERE keyId=:keyId") abstract suspend fun binding(keyId: String): ProviderBinding?
     // Whole-row replacement. @Upsert tries an INSERT and handles the constraint exception for every existing row,
     // which dominates the cost of journalling 100,000 words. Neither table is referenced by a foreign key.
-    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun binding(binding: ProviderBinding)
-    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun bindings(bindings: List<ProviderBinding>)
-    @Query("SELECT * FROM source_references") suspend fun references(): List<SourceReference>
-    @Query("SELECT * FROM source_references WHERE sourceId=:sourceId") suspend fun references(sourceId: String): List<SourceReference>
-    @Query("SELECT DISTINCT keyId FROM source_references WHERE keyId IN (:keyIds)") suspend fun referenced(keyIds: List<String>): List<String>
+    @Insert(onConflict = OnConflictStrategy.REPLACE) abstract suspend fun binding(binding: ProviderBinding)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) abstract suspend fun bindings(bindings: List<ProviderBinding>)
+    @Query("SELECT * FROM source_references") abstract suspend fun references(): List<SourceReference>
+    @Query("SELECT * FROM source_references WHERE sourceId=:sourceId") abstract suspend fun references(sourceId: String): List<SourceReference>
+    @Query("SELECT DISTINCT keyId FROM source_references WHERE keyId IN (:keyIds)") abstract suspend fun referenced(keyIds: List<String>): List<String>
     @Query("SELECT DISTINCT keyId FROM source_references WHERE sourceId != :sourceId AND keyId IN (:keyIds)")
-    suspend fun referencedElsewhere(sourceId: String, keyIds: List<String>): List<String>
-    @Insert suspend fun references(refs: List<SourceReference>)
-    @Query("DELETE FROM source_references WHERE sourceId=:id") suspend fun clearReferences(id: String)
+    abstract suspend fun referencedElsewhere(sourceId: String, keyIds: List<String>): List<String>
+    @Insert abstract suspend fun references(refs: List<SourceReference>)
+    @Query("DELETE FROM source_references WHERE sourceId=:id") abstract suspend fun clearReferences(id: String)
+    @Query("UPDATE provider_bindings SET ownership=:to, observedAt=:now WHERE ownership=:from AND conflict IS NULL AND keyId NOT IN (SELECT keyId FROM source_references)")
+    protected abstract suspend fun changeUnreferenced(from: Ownership, to: Ownership, now: Long)
     /** Borrowed rows no source references any more are released; never deleted, since the app did not add them. */
-    @Query("UPDATE provider_bindings SET ownership='RELEASED', observedAt=:now WHERE ownership='BORROWED' AND conflict IS NULL AND keyId NOT IN (SELECT keyId FROM source_references)")
-    suspend fun releaseUnreferenced(now: Long)
-    @Query("SELECT * FROM sync_plans ORDER BY createdAt, id") suspend fun plans(): List<SyncPlan>
-    // The terminal PlanStates.
-    @Query("SELECT * FROM sync_plans WHERE state NOT IN ('COMMITTED', 'CANCELLED', 'FAILED_PRESERVED') ORDER BY createdAt, id")
-    fun observePendingPlans(): Flow<List<SyncPlan>>
-    @Upsert suspend fun plan(plan: SyncPlan)
-    @Query("SELECT * FROM plan_keys WHERE planId=:id") suspend fun planKeys(id: String): List<PlanKey>
-    @Insert suspend fun planKeys(keys: List<PlanKey>)
-    // Key sets of committed plans are never read again; plans, journal, bindings and references are kept.
-    @Query("DELETE FROM plan_keys WHERE planId IN (SELECT id FROM sync_plans WHERE sourceId=:sourceId AND state='COMMITTED')")
-    suspend fun deleteCommittedPlanKeys(sourceId: String)
-    @Query("SELECT * FROM operation_journal WHERE planId=:id ORDER BY id") suspend fun operations(id: String): List<SyncOperation>
-    @Query("SELECT COUNT(*) FROM operation_journal WHERE planId=:id AND kind=:kind") suspend fun operationCount(id: String, kind: OperationKind): Int
-    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun operation(op: SyncOperation)
-    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun operations(ops: List<SyncOperation>)
-    @Query("SELECT id FROM sync_installation WHERE slot=1") suspend fun installation(): String?
-    @Query("SELECT value FROM reference_generation WHERE slot=1") suspend fun referenceGeneration(): Long?
-    @Insert suspend fun installation(value: SyncInstallation)
+    suspend fun releaseUnreferenced(now: Long) = changeUnreferenced(Ownership.BORROWED, Ownership.RELEASED, now)
+    @Query("SELECT * FROM sync_plans ORDER BY createdAt, id") abstract suspend fun plans(): List<SyncPlan>
+    @Query("SELECT * FROM sync_plans WHERE state NOT IN (:closed) ORDER BY createdAt, id")
+    protected abstract fun observePlansExcept(closed: List<PlanState>): Flow<List<SyncPlan>>
+    /** Every unfinished plan, oldest first. */
+    fun observePendingPlans() = observePlansExcept(PlanState.TERMINAL)
+    @Upsert abstract suspend fun plan(plan: SyncPlan)
+    @Query("SELECT * FROM plan_keys WHERE planId=:id") abstract suspend fun planKeys(id: String): List<PlanKey>
+    @Insert abstract suspend fun planKeys(keys: List<PlanKey>)
+    @Query("DELETE FROM plan_keys WHERE planId IN (SELECT id FROM sync_plans WHERE sourceId=:sourceId AND state=:state)")
+    protected abstract suspend fun deletePlanKeys(sourceId: String, state: PlanState)
+    /** Key sets of committed plans are never read again; plans, journal, bindings and references are kept. */
+    suspend fun deleteCommittedPlanKeys(sourceId: String) = deletePlanKeys(sourceId, PlanState.COMMITTED)
+    @Query("SELECT * FROM operation_journal WHERE planId=:id ORDER BY id") abstract suspend fun operations(id: String): List<SyncOperation>
+    @Query("SELECT COUNT(*) FROM operation_journal WHERE planId=:id AND kind=:kind") abstract suspend fun operationCount(id: String, kind: OperationKind): Int
+    @Insert(onConflict = OnConflictStrategy.REPLACE) abstract suspend fun operation(op: SyncOperation)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) abstract suspend fun operations(ops: List<SyncOperation>)
+    @Query("SELECT id FROM sync_installation WHERE slot=1") abstract suspend fun installation(): String?
+    @Query("SELECT value FROM reference_generation WHERE slot=1") abstract suspend fun referenceGeneration(): Long?
+    @Insert abstract suspend fun installation(value: SyncInstallation)
 }
 
 /**
@@ -102,7 +110,7 @@ class RoomSyncStore(private val db: DictionaryDatabase, private val now: () -> L
             dao.plan(parent(plan).copy(state = PlanState.RECOVERY_REQUIRED))
             updateSource(plan.sourceId, required = false) { it.copy(syncState = SyncState.RECOVERY_REQUIRED) }
         } else updateSource(plan.sourceId, required = false) {
-            it.copy(syncState = plan.state.sourceState,
+            it.copy(syncState = plan.state.sourceState ?: it.syncState,
                 lifecycle = if (plan.state == PlanState.CANCELLED) SourceLifecycle.ACTIVE else it.lifecycle)
         }
     }

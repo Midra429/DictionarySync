@@ -41,7 +41,7 @@ flowchart LR
 
 ### 状態の型
 
-ソース・計画・操作記録・取得要求の状態はKotlinのenum（`SourceLifecycle`・`FetchState`・`SyncState`・`PlanState`・`PlanPurpose`・`Ownership`・`OperationKind`・`OperationPhase`・`FetchOutcome`・`WaitReason`）で扱う。Roomは名前で保存するため、定数名はschemaの一部であり、変更せず追加だけを行う。理由コード（`SyncStopped`・`DictionaryProblem` の `code`）は利用者への説明と問い合わせ用の文字列のまま扱う。
+ソース・計画・操作記録・取得要求の状態はKotlinのenum（`SourceLifecycle`・`FetchState`・`SyncState`・`PlanState`・`PlanPurpose`・`Ownership`・`OperationKind`・`OperationPhase`・`FetchOutcome`・`WaitReason`）で扱う。Roomは名前で保存するため、定数名はschemaの一部であり、変更せず追加だけを行う。変換は `StateConverters` が行い、この版が知らない名前（新しい版が書いた値を、旧版に戻した後に読む場合など）は、自動処理を止める側の値として読む（例: 計画は「要確認」、所有権は「不明」として削除しない）。SQLに状態名を直接書かず、DAOの引数としてenumを渡す。理由コード（`SyncStopped`・`DictionaryProblem` の `code`）は利用者への説明と問い合わせ用の文字列のまま扱う。
 
 ### 変更してはいけない名前
 

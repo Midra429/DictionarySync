@@ -15,6 +15,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import me.midra.dictionarysync.save
 import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.fetch
 
 /** Independent Room databases and a fake Provider. No personal dictionary access. */
 @RunWith(AndroidJUnit4::class)
@@ -268,7 +269,7 @@ class RequirementsStorageTest {
             // A process may stop after approval and before its first Provider operation.
             db.sync().plan(plan.copy(approved = true))
             body = "よみ\t新版の語\t名詞"
-            repo.fetcher.fetch(id)
+            repo.fetch(id)
             val latest = repo.database.library().source(id)!!.latestSnapshot
             assertTrue(sync.synchronize(id))
             assertEquals(plan.newSnapshot, repo.database.library().source(id)!!.activeSnapshot)

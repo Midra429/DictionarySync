@@ -22,7 +22,6 @@ import me.midra.dictionarysync.data.source.HttpRetry
 import me.midra.dictionarysync.data.source.HttpValidators
 import me.midra.dictionarysync.data.source.ValidatorHeaders
 import me.midra.dictionarysync.sync.FetchOutcome
-import me.midra.dictionarysync.sync.FetchReason
 import me.midra.dictionarysync.sync.PendingRequest
 import me.midra.dictionarysync.sync.PendingRequests
 import me.midra.dictionarysync.sync.SyncCoordinator
@@ -42,32 +41,6 @@ class SourceFetcher(
     private val now: () -> Long,
 ) {
     private val dao = db.library()
-
-    /** Requests and immediately executes a manual fetch of one source. */
-    suspend fun fetch(id: String) = withContext(Dispatchers.IO) {
-        execute(requests.submit(listOf(id), FetchReason.MANUAL).single())
-    }
-
-    /** Fetch only: each source commits independently; no plan is prepared, approved or resumed. */
-    suspend fun fetchAll(): List<SourceEntity> = withContext(Dispatchers.IO) {
-        val batch = SyncCoordinator.locked(context) {
-            requests.submit(dao.sources().filter { it.syncable }.map { it.id }, FetchReason.ALL_SOURCES)
-        }
-        for (request in batch) {
-            currentCoroutineContext().ensureActive()
-            execute(request)
-        }
-        batch.mapNotNull { dao.source(it.sourceId) }
-    }
-
-    /** Executes every request that is due. Waiting requests are kept; no busy loop. */
-    suspend fun resumePending() {
-        markInterrupted()
-        for (request in requests.ready()) {
-            currentCoroutineContext().ensureActive()
-            execute(request)
-        }
-    }
 
     /** A fetch still marked running was cut off with its process. */
     suspend fun markInterrupted() = SyncCoordinator.locked(context) {
@@ -97,8 +70,8 @@ class SourceFetcher(
             dao.updateSource(source.copy(state = FetchState.FETCHING, error = null))
             val cached = snapshots.validatedLatest(source)
             val wifiOnly = preferences.wifiOnly.first() // Preference/storage errors must remain unacknowledged.
-            val result = try {
-                download(source, cached, wifiOnly).also { currentCoroutineContext().ensureActive() }
+            val candidate = try {
+                downloadCandidate(source, cached, wifiOnly).also { currentCoroutineContext().ensureActive() }
             } catch (error: Exception) {
                 currentCoroutineContext().ensureActive()
                 if (error is CancellationException) throw error // An unacknowledged request resumes after a restart.
@@ -110,21 +83,19 @@ class SourceFetcher(
                     dao.updateSource(source.copy(state = FetchState.NETWORK_WAIT, error = WaitReason.POLICY_CHANGED.name))
                     requests.defer(request, WaitReason.POLICY_CHANGED)
                 }
-                result.candidate == null -> db.withTransaction {
+                candidate == null -> db.withTransaction {
                     check(cached != null && snapshots.validatedLatest(source)?.id == cached.id) { "CACHE_LOST" }
                     dao.updateSource(source.copy(state = FetchState.FETCHED, error = null, fetchedAt = now(), syncState = SyncState.UPDATE_PENDING))
                     requests.finish(request, FetchOutcome.NOT_MODIFIED)
                 }
-                else -> store(source, request, result.candidate)
+                else -> store(source, request, candidate)
             }
             Unit
         }
     }
 
-    /** A download that is either new content or a validated 304 Not Modified ([candidate] null). */
-    private class Fetched(val candidate: SnapshotStore.Candidate?)
-
-    private fun download(source: SourceEntity, cached: SnapshotEntity?, wifiOnly: Boolean): Fetched {
+    /** Downloads and parses [source]; null for a 304 Not Modified validated against [cached]. */
+    private fun downloadCandidate(source: SourceEntity, cached: SnapshotEntity?, wifiOnly: Boolean): SnapshotStore.Candidate? {
         val validators = cached?.let { HttpValidators(it.finalUrl, ValidatorHeaders.etag(it.etag), ValidatorHeaders.lastModified(it.lastModified)) }
             ?.takeIf { it.usable }
         val result: Download = try { download.get(source.url, wifiOnly, validators) } catch (e: DictionaryProblem) {
@@ -133,10 +104,10 @@ class SourceFetcher(
         }
         if (result.notModified) {
             if (cached == null || validators == null || result.finalUrl != cached.finalUrl) throw DictionaryProblem("UNEXPECTED_304")
-            return Fetched(null)
+            return null
         }
         val parsed = DictionaryParser.parse(result.bytes, source.encoding, source.format, result.contentType)
-        return Fetched(SnapshotStore.Candidate(result, parsed, source.locale))
+        return SnapshotStore.Candidate.of(result, parsed, source.locale)
     }
 
     /** Waits for the network, or charges the retry budget; the previous generation stays either way. */

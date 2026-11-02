@@ -14,6 +14,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import me.midra.dictionarysync.seed
 import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.fetch
 
 /** Dedicated synthetic databases and an in-memory gateway. Never accesses the shared UserDictionary. */
 @RunWith(AndroidJUnit4::class)
@@ -44,7 +45,7 @@ class SyncRecoveryStorageTest {
         fun engine() = SyncEngine(RoomSyncStore(db), gateway, "recovery-install")
         suspend fun source(name: String = "A"): String {
             val id = library.editor.seed(null, name, "https://example.org/recovery/$name", "ja", "TSV", "UTF-8")
-            library.fetcher.fetch(id); return id
+            library.fetch(id); return id
         }
         suspend fun plan(id: String, deleting: Boolean = false): SyncPreview {
             val source = db.library().source(id)!!
@@ -62,7 +63,7 @@ class SyncRecoveryStorageTest {
         try {
             val f = Fixture(db); val id = f.source(); f.apply(f.plan(id))
             val before = db.library().source(id)!!; val refs = db.sync().references()
-            f.body = "よみ\t復旧合成B\t名詞"; f.library.fetcher.fetch(id)
+            f.body = "よみ\t復旧合成B\t名詞"; f.library.fetch(id)
             val p = f.plan(id); f.blockCommit()
             try { f.apply(p); fail() } catch (_: android.database.SQLException) { }
             val parentOps = db.sync().operations(p.plan.id)
@@ -86,12 +87,12 @@ class SyncRecoveryStorageTest {
             val bId = f.source("B"); f.apply(f.plan(bId))
             val original = f.gateway.rows.values.single(); val edited = original.copy(word = "手動編集後")
             f.gateway.rows[original.id] = edited
-            f.body = "よみ\t復旧合成A\t名詞\nよみ\t復旧合成B\t名詞"; f.library.fetcher.fetch(aId)
+            f.body = "よみ\t復旧合成A\t名詞\nよみ\t復旧合成B\t名詞"; f.library.fetch(aId)
             val p = f.plan(aId)
             try { f.apply(p); fail() } catch (e: SyncStopped) { assertEquals("EXTERNAL_EDIT", e.code) }
             val r = f.engine().prepareRecovery(p.plan.id, PlanPurpose.RESYNC)
             assertEquals(setOf(aId, bId), r.relatedSources.toSet())
-            f.body = "べつ\t未承認の新版\t名詞"; f.library.fetcher.fetch(aId)
+            f.body = "べつ\t未承認の新版\t名詞"; f.library.fetch(aId)
             f.blockCommit()
             try { f.apply(r); fail() } catch (_: android.database.SQLException) { }
             assertEquals(3, f.gateway.inserts); assertEquals(edited, f.gateway.rows[original.id])

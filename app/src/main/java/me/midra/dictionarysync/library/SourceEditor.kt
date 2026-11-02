@@ -83,7 +83,7 @@ class SourceEditor(
         if (result.notModified) throw DictionaryProblem("UNEXPECTED_304")
         val parsed = DictionaryParser.parse(result.bytes, settings.encoding, settings.format, result.contentType)
         if (preferences.wifiOnly.first() != wifiOnly) throw DictionaryProblem("POLICY_CHANGED")
-        return SnapshotStore.Candidate(result, parsed, settings.locale)
+        return SnapshotStore.Candidate.of(result, parsed, settings.locale)
     }
 
     /**

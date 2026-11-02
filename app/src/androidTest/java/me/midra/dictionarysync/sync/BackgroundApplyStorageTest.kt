@@ -13,6 +13,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import me.midra.dictionarysync.save
 import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.fetch
 
 /** Screen actions store the desired state; the apply chain performs the Provider writes. Fake Provider only. */
 @RunWith(AndroidJUnit4::class)
@@ -70,7 +71,7 @@ class BackgroundApplyStorageTest {
         try {
             val id = f.repo.editor.save(null, "通知", "https://example.org/notify", "AUTO", "TSV", "AUTO")
             f.runner.pass(events)
-            f.repo.fetcher.fetch(id) // Same content: the apply finds nothing to write.
+            f.repo.fetch(id) // Same content: the apply finds nothing to write.
             f.runner.pass(events)
             assertTrue(f.sync.setEnabled(id, false, background = true)); f.runner.pass(events)
             assertTrue(f.sync.setEnabled(id, true, background = true))

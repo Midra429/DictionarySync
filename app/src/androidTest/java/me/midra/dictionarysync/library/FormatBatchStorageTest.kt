@@ -14,6 +14,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import me.midra.dictionarysync.seed
 import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.fetchAll
+import me.midra.dictionarysync.fetch
 
 /** Independent in-memory databases and synthetic HTTP + Provider. No UserDictionary writes. */
 @RunWith(AndroidJUnit4::class)
@@ -56,7 +58,7 @@ class FormatBatchStorageTest {
             val b = library.editor.seed(null, "CSV", "https://example.org/b", "ja", "APPLE_CSV", "AUTO")
             val c = library.editor.seed(null, "TSV", "https://example.org/c", "ja", "TSV", "AUTO")
             val gateway = Gateway(); val engine = SyncEngine(RoomSyncStore(db), gateway, "synthetic-install")
-            assertEquals(3, library.fetcher.fetchAll().count { it.state == FetchState.FETCHED })
+            assertEquals(3, library.fetchAll().count { it.state == FetchState.FETCHED })
             for (id in listOf(a, b, c)) { val p = prepare(db, engine, id); engine.apply(p.plan.id, p.plan.token) }
             assertEquals(2, gateway.inserts); assertEquals(3, db.sync().references().size)
             val beforeA = db.library().source(a)!!
@@ -66,7 +68,7 @@ class FormatBatchStorageTest {
             bodies["https://example.org/b"] = "べつ,新語,名詞,,新注釈"
             bodies["https://example.org/c"] = "# 正当な空候補"
             calls.clear()
-            val results = library.fetcher.fetchAll()
+            val results = library.fetchAll()
             assertEquals(3, calls.size); assertEquals(3, calls.toSet().size)
             assertEquals(setOf(FetchState.FETCH_FAILED, FetchState.FETCHED), results.map { it.state }.toSet())
             val failed = db.library().source(a)!!
@@ -90,11 +92,11 @@ class FormatBatchStorageTest {
             var body = xml
             val library = testApp(context, db) { url, _, _ -> val bytes = body.toByteArray(); Download(bytes, Downloader.sha256(bytes), url, "application/xml") }
             val id = library.editor.seed(null, "XML", "https://example.org/a", "ja", "PLIST_XML", "AUTO")
-            library.fetcher.fetchAll()
+            library.fetchAll()
             val gateway = Gateway(); val engine = SyncEngine(RoomSyncStore(db), gateway, "synthetic-install")
             val preview = prepare(db, engine, id)
             val journal = db.sync().operations(preview.plan.id)
-            repeat(4) { body = xml.replace("共有語", "新語$it"); library.fetcher.fetchAll() }
+            repeat(4) { body = xml.replace("共有語", "新語$it"); library.fetchAll() }
             assertEquals(preview.plan, db.sync().plans().single { it.id == preview.plan.id })
             assertEquals(journal, db.sync().operations(preview.plan.id))
             assertNotNull(db.library().snapshot(preview.plan.newSnapshot!!))
@@ -112,19 +114,19 @@ class FormatBatchStorageTest {
             var mime = "text/plain"
             val library = testApp(context, db) { url, _, _ -> val bytes = body.toByteArray(); Download(bytes, Downloader.sha256(bytes), url, mime) }
             val id = library.editor.seed(null, "自動形式", "https://example.org/a", "ja", "AUTO", "AUTO")
-            library.fetcher.fetch(id)
+            library.fetch(id)
             val before = db.library().source(id)!!
             val snapshot = db.library().snapshot(before.latestSnapshot!!)!!
             for ((bad, type) in listOf(xml.dropLast(3) to "application/xml", xml.replace("<key>shortcut", "<key>phrase") to "text/plain", "r,w,p,,\nr,w,p,,extra,column" to "text/csv", xml to "text/html", "r\tw\tp" to "application/xml")) {
-                body = bad; mime = type; library.fetcher.fetch(id)
+                body = bad; mime = type; library.fetch(id)
                 val s = db.library().source(id)!!
                 assertEquals(FetchState.FETCH_FAILED, s.state); assertEquals(before.latestSnapshot, s.latestSnapshot)
                 assertEquals(before.fetchedAt, s.fetchedAt); assertEquals(listOf(snapshot.id), db.library().snapshotIds(id))
                 assertEquals(1, db.library().entries(snapshot.id).size)
             }
-            body = "よみ,共有語,名詞,,注釈"; mime = "text/csv"; library.fetcher.fetch(id)
+            body = "よみ,共有語,名詞,,注釈"; mime = "text/csv"; library.fetch(id)
             assertEquals("CSV_MANUAL_REQUIRED", db.library().source(id)!!.error)
-            library.editor.seed(id, before.name, before.url, "ja", "APPLE_CSV", "AUTO"); library.fetcher.fetch(id)
+            library.editor.seed(id, before.name, before.url, "ja", "APPLE_CSV", "AUTO"); library.fetch(id)
             val csv = db.library().snapshot(db.library().source(id)!!.latestSnapshot!!)!!
             assertEquals("apple-csv-v1", csv.parser)
             assertEquals("注釈", db.library().entries(csv.id).single().comment)
@@ -140,7 +142,7 @@ class FormatBatchStorageTest {
             val gateway = Gateway()
             val sync = SourceSync(context, db) { SyncEngine(RoomSyncStore(db), gateway, "synthetic-install") }
             val id = library.editor.seed(null, "Gboard", "https://example.org/g", "AUTO", "AUTO", "AUTO")
-            library.fetcher.fetch(id)
+            library.fetch(id)
             val snapshot = db.library().snapshot(db.library().source(id)!!.latestSnapshot!!)!!
             assertEquals("gboard-v2", snapshot.parser); assertEquals("ja", snapshot.resolvedLocale)
             assertEquals(listOf("fr-CA", "en-CA", "ALL"), db.library().entries(snapshot.id).map { it.locale })
@@ -148,7 +150,7 @@ class FormatBatchStorageTest {
             assertTrue(sync.synchronize(id))
             assertEquals(setOf("fr_CA", "en_CA", null), gateway.rows.values.map { it.locale }.toSet())
             // A manual language overrides what the file declares, so the three rows collapse into one key.
-            library.editor.seed(id, "Gboard", "https://example.org/g", "ja", "AUTO", "AUTO"); library.fetcher.fetch(id)
+            library.editor.seed(id, "Gboard", "https://example.org/g", "ja", "AUTO", "AUTO"); library.fetch(id)
             val manual = db.library().snapshot(db.library().source(id)!!.latestSnapshot!!)!!
             assertEquals(listOf("ja", "ja", "ja"), db.library().entries(manual.id).map { it.locale }); assertEquals(1, manual.uniqueCount)
             assertTrue(sync.synchronize(id))
@@ -162,13 +164,13 @@ class FormatBatchStorageTest {
             var body = xml.replace("</array>", xml.substringAfter("<array>").substringBefore("</array>") + "</array>")
             val library = testApp(context, db) { url, _, _ -> val bytes = body.toByteArray(); Download(bytes, Downloader.sha256(bytes), url, "application/xml") }
             val id = library.editor.seed(null, "同一行XML", "https://example.org/a", "ja", "AUTO", "AUTO")
-            library.fetcher.fetchAll()
+            library.fetchAll()
             val first = db.library().snapshot(db.library().source(id)!!.latestSnapshot!!)!!
             assertEquals(2, first.count); assertEquals(1, first.uniqueCount); assertEquals(1, first.lines)
             assertEquals(listOf(1, 2), db.library().entries(first.id).map { it.line })
             val gateway = Gateway(); val engine = SyncEngine(RoomSyncStore(db), gateway, "synthetic-install")
             val initial = prepare(db, engine, id); engine.apply(initial.plan.id, initial.plan.token)
-            body = "<plist version='1.0'><array/></plist>"; library.fetcher.fetchAll()
+            body = "<plist version='1.0'><array/></plist>"; library.fetchAll()
             assertEquals(FetchState.FETCHED, db.library().source(id)!!.state)
             val empty = prepare(db, engine, id)
             assertEquals(1, empty.ownedDeletes.size)
@@ -191,7 +193,7 @@ class FormatBatchStorageTest {
             val ok = library.editor.seed(null, "成功", "https://example.org/ok", "ja", "APPLE_CSV", "AUTO")
             val deleting = library.editor.seed(null, "削除処理中", "https://example.org/deleting", "ja", "APPLE_CSV", "AUTO")
             db.library().updateSource(db.library().source(deleting)!!.copy(lifecycle = SourceLifecycle.DELETE_PENDING))
-            val result = library.fetcher.fetchAll()
+            val result = library.fetchAll()
             assertEquals(setOf(wait, ok), result.map { it.id }.toSet())
             assertEquals(2, calls.size); assertEquals(1, calls.map { it.second }.toSet().size)
             assertEquals(FetchState.NETWORK_WAIT, db.library().source(wait)!!.state)

@@ -14,6 +14,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import me.midra.dictionarysync.seed
 import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.fetch
 
 /** Isolated databases + fake Provider only. These tests do not write to UserDictionary. */
 @RunWith(AndroidJUnit4::class)
@@ -39,7 +40,7 @@ class SyncStorageTest {
     private suspend fun candidate(db: DictionaryDatabase, body: String = "よみ\t合成語\t名詞") : Pair<AppContainer, String> {
         val library = testApp(context, db) { url, _, _ -> val bytes = body.toByteArray(); Download(bytes, Downloader.sha256(bytes), url, "text/plain") }
         val source = library.editor.seed(null, "同期用合成", "https://example.org/?b=%2f&a=1&a=2", "ja-JP", "TSV", "UTF-8")
-        library.fetcher.fetch(source)
+        library.fetch(source)
         return library to source
     }
     @Test fun copiedSettingsRemainImmutableAndNewFetchInvalidatesUnapprovedPreview() = runBlocking {
@@ -51,7 +52,7 @@ class SyncStorageTest {
             val engine = SyncEngine(RoomSyncStore(db), Gateway(), "install")
             val p = engine.prepare(id, s.revision, null, snap.id, snap.bodyHash, listOf(SyncKey.of(snap.sourceLocale!!, "合成語", "よみ")))
             try { library.editor.seed(id, "変更", s.url, "en", "TSV", "UTF-8"); fail() } catch (e: SyncStopped) { assertEquals("RECOVER_PLAN_FIRST", e.code) }
-            library.fetcher.fetch(id)
+            library.fetch(id)
             assertNotEquals(snap.id, db.library().source(id)!!.latestSnapshot)
             assertNotNull(db.library().snapshot(snap.id)) // The pinned candidate is never GC'd.
             try { engine.apply(p.plan.id, p.plan.token); fail() } catch (e: SyncStopped) { assertEquals("PLAN_STALE", e.code) }
@@ -129,12 +130,12 @@ class SyncStorageTest {
                     db.library().entries(snap.id).map { SyncKey.of(it.locale, it.word, it.reading) })
                 engine.apply(p.plan.id, p.plan.token)
             }
-            library.fetcher.fetch(a); sync(a); library.fetcher.fetch(b); sync(b)
+            library.fetch(a); sync(a); library.fetch(b); sync(b)
             assertEquals(2, gateway.inserts); assertEquals(3, db.sync().references().size)
             val oldA = db.library().source(a)!!.activeSnapshot
-            aBody = "<html>failure</html>"; library.fetcher.fetch(a)
+            aBody = "<html>failure</html>"; library.fetch(a)
             assertEquals(oldA, db.library().source(a)!!.activeSnapshot)
-            bBody = "べつ\tBの合成語\t名詞"; library.fetcher.fetch(b); sync(b)
+            bBody = "べつ\tBの合成語\t名詞"; library.fetch(b); sync(b)
             assertEquals(2, gateway.rows.size) // A's failed fetch still supplies its old reference.
             val deletion = engine.prepare(a, 1, oldA, null, "delete", emptyList())
             engine.apply(deletion.plan.id, deletion.plan.token)

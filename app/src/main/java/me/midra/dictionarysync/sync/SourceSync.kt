@@ -12,9 +12,9 @@ import me.midra.dictionarysync.data.local.SyncState
  * A source's place in the shared dictionary: its desired state (enabled, disabled, deleted) and the plans that bring
  * the Provider there. Every operation holds the sync lock; Provider writes go through [SyncEngine] only.
  */
-class SourceSync(private val context: Context, private val db: DictionaryDatabase, private val engine: () -> SyncEngine) {
+class SourceSync(private val context: Context, private val db: DictionaryDatabase,
+    private val requests: PendingRequests = PendingRequests(db), private val engine: () -> SyncEngine) {
     private val library = db.library()
-    private val requests = PendingRequests(db)
 
     private suspend fun unfinishedPlans() = db.sync().plans().filter { !it.state.terminal }
     private suspend fun requireNoPlan() { if (unfinishedPlans().isNotEmpty()) throw SyncStopped("RECOVER_PLAN_FIRST") }

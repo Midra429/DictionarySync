@@ -101,10 +101,15 @@ class FetchScheduler(
         dispatch.enqueueNow()
     }
 
+    /** Requests a fetch of every syncable source and wakes the fetch chain. */
     suspend fun requestAll() {
-        SyncCoordinator.locked(context) { requests.submit(library.sources().filter { it.syncable }.map { it.id }, FetchReason.ALL_SOURCES) }
+        submitAll()
         repair(userRequested = true)
     }
+
+    /** Durably requests a fetch of every syncable source, without scheduling it. */
+    suspend fun submitAll(): List<PendingRequest> =
+        SyncCoordinator.locked(context) { requests.submit(library.sources().filter { it.syncable }.map { it.id }, FetchReason.ALL_SOURCES) }
 
     /** Requests every syncable source (or just [sourceId]) whose interval has passed. */
     suspend fun requestPeriodic(now: Long, sourceId: String? = null): Unit = SyncCoordinator.locked(context) {
@@ -225,7 +230,7 @@ class FetchWakeWorker(context: Context, params: WorkerParameters) : CoroutineWor
 class PeriodicFetchWorker internal constructor(context: Context, params: WorkerParameters,
     private val runner: PeriodicFetchRunner) : CoroutineWorker(context, params) {
     constructor(context: Context, params: WorkerParameters) : this(context, params, context.appContainer.run {
-        PeriodicFetchRunner(scheduler, requests, dispatch, sourceId = params.inputData.getString(FetchWork.SOURCE_ID))
+        PeriodicFetchRunner(scheduler, requests, dispatch, now, params.inputData.getString(FetchWork.SOURCE_ID))
     })
     override suspend fun doWork(): Result = bounded { runner.run() }
 }

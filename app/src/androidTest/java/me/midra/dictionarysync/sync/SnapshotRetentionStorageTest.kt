@@ -13,6 +13,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import me.midra.dictionarysync.save
 import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.fetch
 
 /** Repeated fetch/apply cycles must not retain every generation a finished plan once referenced. Fake Provider only. */
 @RunWith(AndroidJUnit4::class)
@@ -37,7 +38,7 @@ class SnapshotRetentionStorageTest {
             val id = repo.editor.save(null, "保持", "https://example.org/retention", "AUTO", "TSV", "AUTO")
             assertTrue(sync.synchronize(id))
             repeat(5) {
-                repo.fetcher.fetch(id)
+                repo.fetch(id)
                 assertTrue(sync.synchronize(id))
             }
             val source = db.library().source(id)!!
@@ -68,7 +69,7 @@ class SnapshotRetentionStorageTest {
             val pinned = db.library().source(id)!!.latestSnapshot!!
             val pending = SyncPlan("PENDING", id, 1, pinned, pinned, "retention", "fp", "token", true, PlanState.RECOVERY_REQUIRED, createdAt = Long.MAX_VALUE)
             db.sync().plan(pending); db.sync().planKeys(listOf(PlanKey("PENDING", "k", true)))
-            repeat(3) { repo.fetcher.fetch(id) }
+            repeat(3) { repo.fetch(id) }
             assertTrue(pinned in db.library().snapshotIds(id))
             assertTrue(db.library().entries(pinned).isNotEmpty())
             assertEquals(1, db.sync().planKeys("PENDING").size)

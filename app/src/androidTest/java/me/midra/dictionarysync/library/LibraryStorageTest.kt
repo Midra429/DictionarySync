@@ -14,6 +14,7 @@ import org.junit.runner.RunWith
 import me.midra.dictionarysync.data.local.FetchState
 import me.midra.dictionarysync.seed
 import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.fetch
 
 /** In-memory Room + synthetic HTTP bodies. Never calls UserDictionary or changes device settings. */
 @RunWith(AndroidJUnit4::class)
@@ -27,23 +28,23 @@ class LibraryStorageTest {
                 val bytes = body.toByteArray(); Download(bytes, Downloader.sha256(bytes), url, "text/plain")
             }
             val id = repository.editor.seed(null, "合成試験", "https://example.org/a?x=1&x=2", "ja", "AUTO", "AUTO")
-            repository.fetcher.fetch(id)
+            repository.fetch(id)
             val first = db.library().source(id)!!
             assertEquals(FetchState.FETCHED, first.state)
             val snapshot = first.latestSnapshot!!
             assertEquals(2, db.library().entries(snapshot).size)
             body = "よみ\t語\t名詞\n不正な2列\tデータ"
-            repository.fetcher.fetch(id)
+            repository.fetch(id)
             val failed = db.library().source(id)!!
             assertEquals(FetchState.FETCH_FAILED, failed.state)
             assertEquals(snapshot, failed.latestSnapshot)
             assertEquals(first.fetchedAt, failed.fetchedAt)
             assertEquals(2, db.library().entries(snapshot).size)
             body = "<html>error</html>"
-            repository.fetcher.fetch(id)
+            repository.fetch(id)
             assertEquals(snapshot, db.library().source(id)!!.latestSnapshot)
             body = "# 構造が確定した空のTSV\n"
-            repository.fetcher.fetch(id)
+            repository.fetch(id)
             val empty = db.library().source(id)!!
             assertEquals(FetchState.FETCHED, empty.state)
             assertEquals(snapshot, empty.previousSnapshot)

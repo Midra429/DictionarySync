@@ -4,6 +4,7 @@ import androidx.room.*
 import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
 import me.midra.dictionarysync.data.local.DictionaryDatabase
+import me.midra.dictionarysync.data.local.enumOrNull
 import me.midra.dictionarysync.data.source.HttpRetry
 
 /** Fetch requests only. Completion means handled, not Provider synchronization or even fetch success.
@@ -45,34 +46,37 @@ enum class WaitReason {
     val network get() = this == WIFI_WAIT || this == NETWORK_WAIT || this == POLICY_CHANGED
 
     companion object {
-        fun of(code: String?) = entries.firstOrNull { it.name == code }
+        /** The wait a problem code stands for, if any. */
+        fun of(code: String?) = code?.let { enumOrNull<WaitReason>(it) }
     }
 }
 
+/** States are passed as arguments rather than written into the SQL, so the enums stay the one definition. */
 @Dao
-interface PendingRequestDao {
-    @Query("SELECT * FROM pending_requests WHERE sourceId=:id") suspend fun request(id: String): PendingRequest?
+abstract class PendingRequestDao {
+    @Query("SELECT * FROM pending_requests WHERE sourceId=:id") abstract suspend fun request(id: String): PendingRequest?
     @Query("SELECT * FROM pending_requests WHERE generation > completedGeneration ORDER BY requestedAt, sourceId")
-    suspend fun pending(): List<PendingRequest>
+    abstract suspend fun pending(): List<PendingRequest>
     @Query("SELECT * FROM pending_requests WHERE generation > completedGeneration ORDER BY requestedAt, sourceId")
-    fun observePending(): Flow<List<PendingRequest>>
-    @Upsert suspend fun put(request: PendingRequest)
+    abstract fun observePending(): Flow<List<PendingRequest>>
+    @Upsert abstract suspend fun put(request: PendingRequest)
 
-    // The literal is WaitReason.SERVER_WAIT.
-    @Query("""UPDATE pending_requests SET notBefore=MAX(notBefore,:deadline), waitReason='SERVER_WAIT'
+    @Query("""UPDATE pending_requests SET notBefore=MAX(notBefore,:deadline), waitReason=:reason
         WHERE sourceId=:id AND generation>completedGeneration""")
-    suspend fun hold(id: String, deadline: Long)
+    protected abstract suspend fun hold(id: String, deadline: Long, reason: WaitReason)
+    /** Holds a pending request until the server's Retry-After [deadline]. */
+    suspend fun hold(id: String, deadline: Long) = hold(id, deadline, WaitReason.SERVER_WAIT)
 
     // Ack only the captured generation; a newer request remains pending, including its wait metadata.
     @Query("""UPDATE pending_requests SET completedGeneration=:generation, completedAt=:now, outcome=:outcome, error=:error,
         waitReason=CASE WHEN generation=:generation THEN NULL ELSE waitReason END
         WHERE sourceId=:id AND configRevision=:revision AND generation>=:generation
         AND completedGeneration<:generation""")
-    suspend fun acknowledge(id: String, generation: Long, revision: Long, now: Long, outcome: FetchOutcome, error: String?): Int
+    abstract suspend fun acknowledge(id: String, generation: Long, revision: Long, now: Long, outcome: FetchOutcome, error: String?): Int
 
     @Query("""UPDATE pending_requests SET notBefore=MAX(notBefore,:notBefore), waitReason=:reason
         WHERE sourceId=:id AND generation=:generation AND configRevision=:revision AND completedGeneration<:generation""")
-    suspend fun defer(id: String, generation: Long, revision: Long, notBefore: Long, reason: WaitReason): Int
+    abstract suspend fun defer(id: String, generation: Long, revision: Long, notBefore: Long, reason: WaitReason): Int
 }
 
 /** Room transactions serialize request merges/acks, independently of the long-running execution lock. */

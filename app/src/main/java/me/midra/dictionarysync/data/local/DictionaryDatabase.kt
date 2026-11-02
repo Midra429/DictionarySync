@@ -80,32 +80,45 @@ data class EntryEntity(val snapshotId: String, val line: Int, val reading: Strin
     /** Resolved language of this entry (SourceRules.entryLocale); part of its shared-dictionary key. */
     val locale: String)
 
+/** Source states are passed as arguments rather than written into the SQL, so the enums stay the one definition. */
 @Dao
-interface LibraryDao {
-    @Query("SELECT * FROM sources WHERE lifecycle != 'DELETED' ORDER BY name, id") fun observeSources(): Flow<List<SourceEntity>>
-    @Query("SELECT * FROM sources WHERE lifecycle != 'DELETED' ORDER BY id") suspend fun sources(): List<SourceEntity>
-    @Query("SELECT * FROM sources ORDER BY id") suspend fun allSources(): List<SourceEntity>
-    @Query("SELECT * FROM sources WHERE id=:id") suspend fun source(id: String): SourceEntity?
-    @Query("SELECT s.id AS sourceId, p.count FROM sources s JOIN snapshots p ON p.id=s.latestSnapshot WHERE s.lifecycle != 'DELETED'")
-    fun observeCounts(): Flow<List<SourceCount>>
-    @Query("SELECT * FROM sources WHERE url=:url AND lifecycle='DELETED' LIMIT 1") suspend fun archivedUrl(url: String): SourceEntity?
-    @Insert suspend fun addSource(source: SourceEntity)
-    @Update suspend fun updateSource(source: SourceEntity)
-    @Query("SELECT * FROM snapshots WHERE id=:id") suspend fun snapshot(id: String): SnapshotEntity?
-    @Query("SELECT * FROM snapshots WHERE sourceId=:sourceId ORDER BY fetchedAt DESC") fun snapshots(sourceId: String): Flow<List<SnapshotEntity>>
-    @Insert suspend fun addSnapshot(snapshot: SnapshotEntity)
-    @Insert suspend fun addEntries(entries: List<EntryEntity>)
-    @Query("SELECT * FROM entries WHERE snapshotId=:snapshot ORDER BY line") suspend fun entries(snapshot: String): List<EntryEntity>
+abstract class LibraryDao {
+    @Query("SELECT * FROM sources WHERE lifecycle != :hidden ORDER BY name, id")
+    protected abstract fun observeSourcesExcept(hidden: SourceLifecycle): Flow<List<SourceEntity>>
+    /** Every source that is not deleted, by name. */
+    fun observeSources() = observeSourcesExcept(SourceLifecycle.DELETED)
+    @Query("SELECT * FROM sources WHERE lifecycle != :hidden ORDER BY id")
+    protected abstract suspend fun sourcesExcept(hidden: SourceLifecycle): List<SourceEntity>
+    /** Every source that is not deleted (including those whose deletion is pending). */
+    suspend fun sources() = sourcesExcept(SourceLifecycle.DELETED)
+    @Query("SELECT * FROM sources ORDER BY id") abstract suspend fun allSources(): List<SourceEntity>
+    @Query("SELECT * FROM sources WHERE id=:id") abstract suspend fun source(id: String): SourceEntity?
+    @Query("SELECT s.id AS sourceId, p.count FROM sources s JOIN snapshots p ON p.id=s.latestSnapshot WHERE s.lifecycle != :hidden")
+    protected abstract fun observeCountsExcept(hidden: SourceLifecycle): Flow<List<SourceCount>>
+    /** The latest generation's entry count of every source that is not deleted. */
+    fun observeCounts() = observeCountsExcept(SourceLifecycle.DELETED)
+    @Query("SELECT * FROM sources WHERE url=:url AND lifecycle=:lifecycle LIMIT 1")
+    protected abstract suspend fun sourceWithUrl(url: String, lifecycle: SourceLifecycle): SourceEntity?
+    /** A deleted source with [url], whose row a new source with the same URL continues. */
+    suspend fun archivedUrl(url: String) = sourceWithUrl(url, SourceLifecycle.DELETED)
+    @Insert abstract suspend fun addSource(source: SourceEntity)
+    @Update abstract suspend fun updateSource(source: SourceEntity)
+    @Query("SELECT * FROM snapshots WHERE id=:id") abstract suspend fun snapshot(id: String): SnapshotEntity?
+    @Query("SELECT * FROM snapshots WHERE sourceId=:sourceId ORDER BY fetchedAt DESC") abstract fun snapshots(sourceId: String): Flow<List<SnapshotEntity>>
+    @Insert abstract suspend fun addSnapshot(snapshot: SnapshotEntity)
+    @Insert abstract suspend fun addEntries(entries: List<EntryEntity>)
+    @Query("SELECT * FROM entries WHERE snapshotId=:snapshot ORDER BY line") abstract suspend fun entries(snapshot: String): List<EntryEntity>
     @Query("""SELECT * FROM entries WHERE snapshotId=:snapshot AND (word LIKE :query ESCAPE '\' OR reading LIKE :query ESCAPE '\') ORDER BY line""")
-    fun search(snapshot: String, query: String): PagingSource<Int, EntryEntity>
-    @Query("SELECT DISTINCT locale FROM entries WHERE snapshotId=:snapshot ORDER BY locale") fun locales(snapshot: String): Flow<List<String>>
-    @Query("DELETE FROM entries WHERE snapshotId=:snapshot") suspend fun deleteEntries(snapshot: String)
-    @Query("DELETE FROM snapshots WHERE id=:snapshot") suspend fun deleteSnapshot(snapshot: String)
-    @Query("SELECT id FROM snapshots WHERE sourceId=:sourceId") suspend fun snapshotIds(sourceId: String): List<String>
-    @Query("DELETE FROM sources WHERE id=:id") suspend fun deleteSource(id: String)
+    abstract fun search(snapshot: String, query: String): PagingSource<Int, EntryEntity>
+    @Query("SELECT DISTINCT locale FROM entries WHERE snapshotId=:snapshot ORDER BY locale") abstract fun locales(snapshot: String): Flow<List<String>>
+    @Query("DELETE FROM entries WHERE snapshotId=:snapshot") abstract suspend fun deleteEntries(snapshot: String)
+    @Query("DELETE FROM snapshots WHERE id=:snapshot") abstract suspend fun deleteSnapshot(snapshot: String)
+    @Query("SELECT id FROM snapshots WHERE sourceId=:sourceId") abstract suspend fun snapshotIds(sourceId: String): List<String>
+    @Query("DELETE FROM sources WHERE id=:id") abstract suspend fun deleteSource(id: String)
 }
 
 @Database(entities = [SourceEntity::class, SnapshotEntity::class, EntryEntity::class, SyncKey::class, ProviderBinding::class, SourceReference::class, SyncPlan::class, PlanKey::class, SyncOperation::class, SyncInstallation::class, PendingRequest::class, ReferenceGeneration::class], version = 1, exportSchema = true)
+@TypeConverters(StateConverters::class)
 abstract class DictionaryDatabase : RoomDatabase() {
     abstract fun library(): LibraryDao
     abstract fun sync(): SyncDao

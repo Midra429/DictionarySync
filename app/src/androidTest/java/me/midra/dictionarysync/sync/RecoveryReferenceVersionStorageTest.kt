@@ -13,6 +13,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import me.midra.dictionarysync.save
 import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.fetch
 
 /** A consented recovery stops if source references change afterwards, by any writer. Fake Provider only. */
 @RunWith(AndroidJUnit4::class)
@@ -26,7 +27,7 @@ class RecoveryReferenceVersionStorageTest {
         assertTrue(sync.synchronize(id))
         gateway.rows.clear() // Externally deleted in Settings.
         body = "よみ\t参照語\t名詞\nよみ\t参照語二\t名詞"
-        repo.fetcher.fetch(id)
+        repo.fetch(id)
         assertFalse(sync.synchronize(id))
         return db.sync().plans().single { it.state == PlanState.RECOVERY_REQUIRED }
     }

@@ -22,26 +22,37 @@ import me.midra.dictionarysync.data.source.SourceRules
 class SnapshotStore(private val db: DictionaryDatabase) {
     private val dao = db.library()
 
-    /** A parsed download of [source]'s current settings, with every entry's language resolved. */
-    class Candidate(val download: Download, val parsed: ParsedDictionary, sourceLocale: String) {
-        val entries = resolved(parsed.entries, sourceLocale)
+    /**
+     * A parsed download, with every entry's language resolved. Keeps only what a generation stores, so the downloaded
+     * body and the unresolved entries can be collected before the entries are inserted.
+     */
+    class Candidate private constructor(
+        val bodyHash: String, val finalUrl: String, val bytes: Int, val etag: String?, val lastModified: String?,
+        val parser: String, val encoding: String, val lines: Int, val skippedLines: Int, val firstSkippedLine: Int?,
+        val entries: List<ParsedEntry>,
+    ) {
         val contentHash = contentHash(entries)
+
+        companion object {
+            fun of(download: Download, parsed: ParsedDictionary, sourceLocale: String) = Candidate(
+                download.sha256, download.finalUrl, download.bytes.size, download.etag, download.lastModified,
+                parsed.parser, parsed.encoding, parsed.physicalLines, parsed.skipped.size, parsed.skipped.firstOrNull(),
+                resolved(parsed.entries, sourceLocale))
+        }
     }
 
     /** Stores [candidate] as a new generation of [source]'s current settings and revision. */
     suspend fun add(source: SourceEntity, candidate: Candidate, fetchedAt: Long): SnapshotEntity {
-        val download = candidate.download
-        val parsed = candidate.parsed
         val entries = candidate.entries
         val snapshot = SnapshotEntity(
             id = UUID.randomUUID().toString(), sourceId = source.id, revision = source.revision,
-            bodyHash = download.sha256, contentHash = candidate.contentHash, fetchedAt = fetchedAt, finalUrl = download.finalUrl,
-            parser = parsed.parser, encoding = parsed.encoding, bytes = download.bytes.size, lines = parsed.physicalLines,
+            bodyHash = candidate.bodyHash, contentHash = candidate.contentHash, fetchedAt = fetchedAt, finalUrl = candidate.finalUrl,
+            parser = candidate.parser, encoding = candidate.encoding, bytes = candidate.bytes, lines = candidate.lines,
             count = entries.size, uniqueCount = uniqueCount(entries),
             sourceLocale = source.locale, sourceUrl = source.url, sourceFormat = source.format, sourceEncoding = source.encoding,
-            etag = download.etag, lastModified = download.lastModified,
+            etag = candidate.etag, lastModified = candidate.lastModified,
             validationVersion = DictionaryParser.VALIDATION_VERSION, resolvedLocale = SourceRules.resolvedLocale(source.locale),
-            skippedLines = parsed.skipped.size, firstSkippedLine = parsed.skipped.firstOrNull(),
+            skippedLines = candidate.skippedLines, firstSkippedLine = candidate.firstSkippedLine,
         )
         dao.addSnapshot(snapshot)
         entries.chunked(ENTRY_BATCH).forEach { chunk ->

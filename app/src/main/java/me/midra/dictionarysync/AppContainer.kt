@@ -34,6 +34,7 @@ import me.midra.dictionarysync.ui.notification.SyncNotifier
 class AppContainer(
     context: Context,
     val database: DictionaryDatabase = DictionaryDatabase.get(context),
+    /** The clock of every component the container builds, including the sync engine and the periodic check. */
     val now: () -> Long = System::currentTimeMillis,
     download: DictionaryDownload = DictionaryDownload.android(context),
     /** A new engine per operation: the Android gateway reads the diagnosis once per instance. */
@@ -52,8 +53,8 @@ class AppContainer(
     val snapshots = SnapshotStore(database)
     val editor = SourceEditor(this.context, database, preferences, snapshots, download, now)
     val fetcher = SourceFetcher(this.context, database, preferences, requests, snapshots, download, now)
-    val sourceSync = sourceSync ?: SourceSync(this.context, database, engine ?: {
-        SyncEngine(RoomSyncStore(database), AndroidSyncGateway(this.context), SyncCoordinator.installation(this.context))
+    val sourceSync = sourceSync ?: SourceSync(this.context, database, requests, engine ?: {
+        SyncEngine(RoomSyncStore(database, now), AndroidSyncGateway(this.context), SyncCoordinator.installation(this.context), now)
     })
     val applies = ApplyQueue(database, this.sourceSync)
 

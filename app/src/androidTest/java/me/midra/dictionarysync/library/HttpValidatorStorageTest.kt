@@ -13,6 +13,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import me.midra.dictionarysync.seed
 import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.fetch
+import me.midra.dictionarysync.resumePendingFetches
 
 /** Synthetic HTTP and Provider only; never reads/writes shared UserDictionary. */
 @RunWith(AndroidJUnit4::class)
@@ -45,13 +47,13 @@ class HttpValidatorStorageTest {
                 else { assertEquals("\"validated\"", validators!!.etag); unchanged(url) }
             }
             val id = repo.editor.seed(null, "合成", "https://example.org/a?x=1&x=2", "ja", "TSV", "AUTO")
-            repo.fetcher.fetch(id)
+            repo.fetch(id)
             val gateway = Gateway(); val engine = SyncEngine(RoomSyncStore(db), gateway, "synthetic")
             val preview = prepare(db, engine, id); engine.apply(preview.plan.id, preview.plan.token)
             val next = prepare(db, engine, id)
             val before = repo.database.library().source(id)!!; val journal = db.sync().operations(next.plan.id)
             gateway.rows.clear() // External deletion while HTTP still reports unchanged.
-            repo.fetcher.fetch(id)
+            repo.fetch(id)
             val after = repo.database.library().source(id)!!
             assertEquals(before.latestSnapshot, after.latestSnapshot); assertEquals(before.activeSnapshot, after.activeSnapshot)
             assertEquals(before.syncedAt, after.syncedAt); assertEquals(before.changedAt, after.changedAt)
@@ -67,8 +69,8 @@ class HttpValidatorStorageTest {
         try {
             val repo = testApp(context, db) { url, _, validators -> if (validators == null) body(url, "# valid empty") else unchanged(url) }
             val id = repo.editor.seed(null, "空", "https://example.org/a", "ja", "TSV", "AUTO")
-            repo.fetcher.fetch(id); val first = repo.database.library().source(id)!!
-            repo.fetcher.fetch(id)
+            repo.fetch(id); val first = repo.database.library().source(id)!!
+            repo.fetch(id)
             assertEquals(first.latestSnapshot, repo.database.library().source(id)!!.latestSnapshot)
             assertEquals(FetchState.FETCHED, repo.database.library().source(id)!!.state)
             assertEquals(FetchOutcome.NOT_MODIFIED, db.requests().request(id)!!.outcome)
@@ -82,14 +84,14 @@ class HttpValidatorStorageTest {
             var seen: HttpValidators? = null
             val repo = testApp(context, db) { url, _, validators -> seen = validators; body(url) }
             val id = repo.editor.seed(null, "合成", "https://example.org/a", "ja", "TSV", "AUTO")
-            repo.fetcher.fetch(id)
+            repo.fetch(id)
             db.library().deleteEntries(repo.database.library().source(id)!!.latestSnapshot!!)
-            repo.fetcher.fetch(id); assertNull(seen)
+            repo.fetch(id); assertNull(seen)
             db.openHelper.writableDatabase.execSQL("UPDATE snapshots SET validationVersion='obsolete' WHERE id=?", arrayOf(repo.database.library().source(id)!!.latestSnapshot))
-            repo.fetcher.fetch(id); assertNull(seen)
+            repo.fetch(id); assertNull(seen)
             repo.editor.seed(id, "合成", "https://example.org/a", "en", "TSV", "UTF-8")
-            repo.fetcher.fetch(id); assertNull(seen)
-            repo.fetcher.fetch(id); assertNotNull(seen)
+            repo.fetch(id); assertNull(seen)
+            repo.fetch(id); assertNotNull(seen)
         } finally { db.close() }
     }
 
@@ -99,12 +101,12 @@ class HttpValidatorStorageTest {
             var text = "よみ\t合成語\t名詞"; var seen: HttpValidators? = null
             val repo = testApp(context, db) { url, _, validators -> seen = validators; body(url, text).copy(etag = if (text.startsWith("<html")) "\"bad\"" else "\"good\"") }
             val id = repo.editor.seed(null, "合成", "https://example.org/a", "ja", "TSV", "AUTO")
-            repo.fetcher.fetch(id); val first = repo.database.library().source(id)!!.latestSnapshot!!
-            text = "<html>bad</html>"; repo.fetcher.fetch(id)
+            repo.fetch(id); val first = repo.database.library().source(id)!!.latestSnapshot!!
+            text = "<html>bad</html>"; repo.fetch(id)
             assertEquals(first, repo.database.library().source(id)!!.latestSnapshot); assertEquals(1, repo.database.library().snapshotIds(id).size)
             assertEquals("\"good\"", seen!!.etag); assertEquals("\"good\"", repo.database.library().snapshot(first)!!.etag)
             db.openHelper.writableDatabase.execSQL("UPDATE snapshots SET validationVersion='dictionary-validation-v0'") // Validated by older parser rules.
-            text = "よみ\t合成語\t名詞"; repo.fetcher.fetch(id); assertNull(seen)
+            text = "よみ\t合成語\t名詞"; repo.fetch(id); assertNull(seen)
         } finally { db.close() }
     }
 
@@ -113,12 +115,12 @@ class HttpValidatorStorageTest {
         try {
             val repo = testApp(context, db) { url, _, validators -> if (validators == null) body(url) else unchanged(url) }
             val id = repo.editor.seed(null, "合成", "https://example.org/a", "ja", "TSV", "AUTO")
-            repo.fetcher.fetch(id); val before = repo.database.library().source(id)!!
+            repo.fetch(id); val before = repo.database.library().source(id)!!
             db.openHelper.writableDatabase.execSQL("CREATE TRIGGER reject_http_ack BEFORE UPDATE OF completedGeneration ON pending_requests WHEN NEW.completedGeneration != OLD.completedGeneration BEGIN SELECT RAISE(ABORT,'synthetic'); END")
-            try { repo.fetcher.fetch(id); fail() } catch (_: android.database.sqlite.SQLiteException) { }
+            try { repo.fetch(id); fail() } catch (_: android.database.sqlite.SQLiteException) { }
             assertEquals(before.fetchedAt, repo.database.library().source(id)!!.fetchedAt); assertEquals(1, db.requests().pending().size)
             db.openHelper.writableDatabase.execSQL("DROP TRIGGER reject_http_ack")
-            repo.fetcher.resumePending(); assertTrue(db.requests().pending().isEmpty())
+            repo.resumePendingFetches(); assertTrue(db.requests().pending().isEmpty())
         } finally { db.close() }
     }
 
@@ -134,11 +136,11 @@ class HttpValidatorStorageTest {
                 }
             }
             val id = repo.editor.seed(null, "合成", "https://example.org/a", "ja", "TSV", "AUTO")
-            repo.fetcher.fetch(id); val first = repo.database.library().source(id)!!.latestSnapshot
-            repo.fetcher.fetch(id); assertEquals(3, calls); assertNotEquals(first, repo.database.library().source(id)!!.latestSnapshot)
+            repo.fetch(id); val first = repo.database.library().source(id)!!.latestSnapshot
+            repo.fetch(id); assertEquals(3, calls); assertNotEquals(first, repo.database.library().source(id)!!.latestSnapshot)
             val bad = testApp(context, db) { url, _, validators -> assertNull(validators); unchanged(url) }
             val badId = bad.editor.seed(null, "不正304", "https://example.org/b", "ja", "TSV", "AUTO")
-            bad.fetcher.fetch(badId); assertNull(bad.database.library().source(badId)!!.latestSnapshot)
+            bad.fetch(badId); assertNull(bad.database.library().source(badId)!!.latestSnapshot)
             assertEquals("UNEXPECTED_304", bad.database.library().source(badId)!!.error)
         } finally { db.close() }
     }

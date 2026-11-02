@@ -15,6 +15,7 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import me.midra.dictionarysync.testApp
+import me.midra.dictionarysync.fetch
 
 /** No real HTTP or UserDictionary operations. Clock advances without sleeping. */
 @RunWith(AndroidJUnit4::class)
@@ -53,7 +54,7 @@ class HttpRetryStorageTest {
         try {
             source(db); val now = System.currentTimeMillis()
             val repo = testApp(context, db, now = { now }) { _, _, _ -> throw DictionaryProblem("HTTP_429", retryAfter = "3600") }
-            repo.fetcher.fetch("A")
+            repo.fetch("A")
             val pending = db.requests().pending().single(); assertEquals(now + 3_600_000, pending.notBefore)
             assertEquals(1, pending.failureCount); assertEquals(pending.notBefore, db.library().source("A")!!.serverNotBefore)
             val merged = repo.requests.submit(listOf("A"), FetchReason.MANUAL).single()
@@ -73,7 +74,7 @@ class HttpRetryStorageTest {
             val repo = testApp(context, db, now = { now }) { _, _, _ ->
                 started.countDown(); check(release.await(10, TimeUnit.SECONDS)); throw DictionaryProblem("HTTP_503", retryAfter = "3600")
             }
-            val job = async(Dispatchers.IO) { repo.fetcher.fetch("A") }
+            val job = async(Dispatchers.IO) { repo.fetch("A") }
             try {
                 assertTrue(withContext(Dispatchers.IO) { started.await(10, TimeUnit.SECONDS) })
                 repo.requests.submit(listOf("A"), FetchReason.MANUAL)
@@ -118,11 +119,11 @@ class HttpRetryStorageTest {
                 val bytes = if (mode == "html") "<html>bad</html>".toByteArray() else "r\tw\tp".toByteArray()
                 Download(bytes, Downloader.sha256(bytes), url, "text/plain")
             }
-            repo.fetcher.fetch("A"); assertTrue(db.requests().pending().isEmpty())
-            mode = "ok"; repo.fetcher.fetch("A"); val before = db.library().source("A")!!
-            mode = "html"; repo.fetcher.fetch("A"); assertTrue(db.requests().pending().isEmpty())
+            repo.fetch("A"); assertTrue(db.requests().pending().isEmpty())
+            mode = "ok"; repo.fetch("A"); val before = db.library().source("A")!!
+            mode = "html"; repo.fetch("A"); assertTrue(db.requests().pending().isEmpty())
             assertEquals(before.latestSnapshot, db.library().source("A")!!.latestSnapshot)
-            mode = "500"; repo.fetcher.fetch("A"); val waiting = db.requests().pending().single()
+            mode = "500"; repo.fetch("A"); val waiting = db.requests().pending().single()
             assertEquals(before.fetchedAt, db.library().source("A")!!.fetchedAt)
             now = waiting.notBefore; mode = "ok"; repo.fetcher.execute(waiting)
             assertEquals(FetchOutcome.FETCHED, db.requests().request("A")!!.outcome); assertEquals(1, db.requests().request("A")!!.failureCount)

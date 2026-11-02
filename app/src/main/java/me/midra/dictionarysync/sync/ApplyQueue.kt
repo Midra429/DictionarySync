@@ -12,11 +12,13 @@ class ApplyQueue(private val db: DictionaryDatabase, private val sync: SourceSyn
     /** The sources the apply chain picks up by itself, an interrupted plan first (it blocks every other source). */
     suspend fun due(): List<SourceEntity> = library.sources().filter { it.syncState.dueInBackground }.sortedBy { it.syncState.waiting }
 
-    suspend fun isEmpty() = due().isEmpty()
+    suspend fun isEmpty() = library.sources().none { it.syncState.dueInBackground }
 
     /** Applies up to [limit] due sources, reporting each to [events]. A failure is recorded on its source and skipped. */
-    suspend fun apply(limit: Int = Int.MAX_VALUE, events: SyncEvents = SyncEvents.None) {
-        for (source in due().take(limit)) {
+    suspend fun apply(limit: Int = Int.MAX_VALUE, events: SyncEvents = SyncEvents.None) = apply(due().take(limit), events)
+
+    private suspend fun apply(sources: List<SourceEntity>, events: SyncEvents) {
+        for (source in sources) {
             currentCoroutineContext().ensureActive()
             events.applying(source)
             val before = committedPlans(source.id)
@@ -38,8 +40,9 @@ class ApplyQueue(private val db: DictionaryDatabase, private val sync: SourceSyn
      * another pass is useful; failed sources are not retried on their own.
      */
     suspend fun pass(events: SyncEvents = SyncEvents.None): Boolean {
-        val before = due().map { it.id to it.syncState }
-        apply(events = events)
+        val due = due()
+        apply(due, events)
+        val before = due.map { it.id to it.syncState }
         val after = due().map { it.id to it.syncState }
         return after.isNotEmpty() && after != before
     }
