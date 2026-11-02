@@ -163,10 +163,13 @@ private fun AddSourceRailButton(onClick: () -> Unit) {
 @Composable
 private fun DestinationItems(inSettings: Boolean, showSources: () -> Unit, showSettings: () -> Unit,
     item: @Composable (Boolean, () -> Unit, @Composable () -> Unit, @Composable () -> Unit) -> Unit) {
-    item(!inSettings, showSources, { Icon(painterResource(R.drawable.ic_dictionary_24), contentDescription = null) },
-        { Text(stringResource(R.string.nav_sources)) })
-    item(inSettings, showSources@{ showSettings() }, { Icon(painterResource(R.drawable.ic_settings_24), contentDescription = null) },
-        { Text(stringResource(R.string.nav_settings)) })
+    // The selected destination shows the filled glyph, the others the outlined one.
+    item(!inSettings, showSources, {
+        Icon(painterResource(if (!inSettings) R.drawable.ic_dictionary_fill_24 else R.drawable.ic_dictionary_24), contentDescription = null)
+    }, { Text(stringResource(R.string.nav_sources)) })
+    item(inSettings, showSources@{ showSettings() }, {
+        Icon(painterResource(if (inSettings) R.drawable.ic_settings_fill_24 else R.drawable.ic_settings_24), contentDescription = null)
+    }, { Text(stringResource(R.string.nav_settings)) })
 }
 
 /** Dialog-level flows driven by ViewModel state, so they survive recreation and finish even if the caller is gone. */
