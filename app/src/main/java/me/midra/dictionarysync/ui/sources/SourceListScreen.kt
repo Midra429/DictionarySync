@@ -16,6 +16,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
@@ -80,11 +81,14 @@ fun SourceListScreen(model: AppViewModel, openedSourceId: String?, snackbar: Sna
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
             if (selecting) TopAppBar(
-                title = { Text(stringResource(R.string.selection_count, selection.size)) },
+                title = { Text(stringResource(R.string.selection_count, selection.size), maxLines = 1) },
                 navigationIcon = { IconButton(onClick = ::exitSelection) { Icon(AppIcons.Close, stringResource(R.string.selection_exit)) } },
                 actions = {
-                    TextButton(onClick = list::selectAll, enabled = !busy) { Text(stringResource(R.string.selection_all)) }
-                    TextButton(onClick = list::clearSelection, enabled = !busy && selection.isNotEmpty()) { Text(stringResource(R.string.selection_clear)) }
+                    // One action that flips between the two, so the count keeps its room with large text.
+                    val allSelected = sources.isNotEmpty() && sources.all { it.id in selection }
+                    TextButton(onClick = if (allSelected) list::clearSelection else list::selectAll, enabled = !busy) {
+                        Text(stringResource(if (allSelected) R.string.selection_clear else R.string.selection_all), maxLines = 1)
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             ) else TopAppBar(
@@ -93,7 +97,8 @@ fun SourceListScreen(model: AppViewModel, openedSourceId: String?, snackbar: Sna
                 actions = {
                     TooltipIconButton(AppIcons.Sync, stringResource(R.string.action_sync_all), { list.fetchAll() },
                         enabled = !busy && sources.any { it.syncable })
-                    TextButton(onClick = { selecting = true }, enabled = !busy && sources.isNotEmpty()) { Text(stringResource(R.string.action_select)) }
+                    TooltipIconButton(AppIcons.Checklist, stringResource(R.string.action_select), { selecting = true },
+                        enabled = !busy && sources.isNotEmpty())
                 },
                 scrollBehavior = scrollBehavior,
             )
@@ -171,17 +176,26 @@ fun SourceListScreen(model: AppViewModel, openedSourceId: String?, snackbar: Sna
                 enter = fadeIn() + slideInVertically { it }, exit = fadeOut() + slideOutVertically { it }) {
                 HorizontalFloatingToolbar(expanded = true, colors = FloatingToolbarDefaults.vibrantFloatingToolbarColors()) {
                     val enabled = !busy && selection.isNotEmpty()
-                    // Text buttons default to primary, which is too faint on the vibrant (primary container) toolbar.
-                    val colors = ButtonDefaults.textButtonColors(contentColor = LocalContentColor.current)
-                    TextButton(onClick = { list.batch(selection, BatchOperation.ENABLE) }, enabled = enabled, colors = colors) { Text(stringResource(R.string.action_enable)) }
-                    TextButton(onClick = { list.batch(selection, BatchOperation.DISABLE) }, enabled = enabled, colors = colors) { Text(stringResource(R.string.action_disable)) }
-                    TextButton(onClick = { deleteIds = selection.toList() }, enabled = enabled, colors = colors) { Text(stringResource(R.string.action_delete)) }
+                    ToolbarAction(AppIcons.ToggleOn, stringResource(R.string.action_enable), enabled) { list.batch(selection, BatchOperation.ENABLE) }
+                    ToolbarAction(AppIcons.ToggleOff, stringResource(R.string.action_disable), enabled) { list.batch(selection, BatchOperation.DISABLE) }
+                    ToolbarAction(AppIcons.Delete, stringResource(R.string.action_delete), enabled) { deleteIds = selection.toList() }
                 }
             }
         }
     }
     if (deleteIds.isNotEmpty()) DeleteDialog(deleteIds.size, onConfirm = { list.batch(deleteIds, BatchOperation.DELETE); deleteIds = emptyList() },
         onDismiss = { deleteIds = emptyList() })
+}
+
+/** Labeled action of the selection toolbar: icon and text, in the toolbar's content color (primary is too faint on it). */
+@Composable
+private fun ToolbarAction(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
+    TextButton(onClick = onClick, enabled = enabled, colors = ButtonDefaults.textButtonColors(contentColor = LocalContentColor.current),
+        contentPadding = ButtonDefaults.TextButtonWithIconContentPadding) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+        Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+        Text(label, maxLines = 1)
+    }
 }
 
 @Composable
@@ -196,7 +210,11 @@ private fun summaryText(summary: ListSummary): String = when {
 private fun batchMessage(result: BatchResult, selecting: Boolean): String? {
     // A single switch reports through its row (and an error dialog if it was refused).
     if (!selecting && result.succeeded + result.failed == 1) return null
-    if (result.failed == 0) return stringResource(R.string.batch_result, result.succeeded)
+    if (result.failed == 0) return stringResource(when (result.operation) {
+        BatchOperation.ENABLE -> R.string.batch_result_enabled
+        BatchOperation.DISABLE -> R.string.batch_result_disabled
+        BatchOperation.DELETE -> R.string.batch_result_deleted
+    }, result.succeeded)
     val text = stringResource(R.string.batch_result_failed, result.succeeded, result.failed)
     return if (selecting) text + "\n" + stringResource(R.string.batch_result_failed_hint) else text
 }
@@ -243,7 +261,8 @@ internal fun SourceRow(
 private fun metaText(source: SourceEntity, count: Int?, now: Long): String {
     val parts = buildList {
         add(if (count != null) stringResource(R.string.source_words, formatCount(count)) else stringResource(R.string.source_updated_never))
-        add(stringResource(R.string.source_interval_every, intervalText(source.syncIntervalHours)))
+        // A disabled source is not synced, so its interval would only mislead.
+        if (source.enabled) add(stringResource(R.string.source_interval_every, intervalText(source.syncIntervalHours)))
         if (count != null) add(updatedText(updatedAt(source.fetchedAt, now)))
     }
     return parts.joinToString(" · ")

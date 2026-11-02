@@ -65,12 +65,13 @@ internal fun SetupContent(batteryOptimized: Boolean?, notificationsEnabled: Bool
                 Text(stringResource(R.string.setup_intro), style = MaterialTheme.typography.bodyLarge)
                 Step(1, stringResource(R.string.setup_step_background), done = batteryOptimized == false) {
                     Text(stringResource(R.string.setup_step_background_body))
-                    // The card supplies the surface; the row reaches into the card padding so its text lines up with the body.
-                    BatteryOptimizationItem(batteryOptimized, Modifier.bleed(16.dp), containerColor = Color.Transparent)
+                    // The card supplies the surface; the row reaches into the card padding so its text lines up with the body,
+                    // and gives back part of its own vertical padding so the card's spacing is not doubled.
+                    BatteryOptimizationItem(batteryOptimized, Modifier.bleed(16.dp, 8.dp), containerColor = Color.Transparent)
                 }
                 Step(2, stringResource(R.string.setup_step_notifications), done = notificationsEnabled == true) {
                     Text(stringResource(R.string.setup_step_notifications_body))
-                    NotificationItem(notificationsEnabled, onNotificationsChanged, Modifier.bleed(16.dp), containerColor = Color.Transparent)
+                    NotificationItem(notificationsEnabled, onNotificationsChanged, Modifier.bleed(16.dp, 8.dp), containerColor = Color.Transparent)
                 }
                 Step(3, stringResource(R.string.setup_step_dictionary), done = readiness == SyncReadiness.READY) {
                     Text(stringResource(R.string.setup_step_dictionary_body))
@@ -93,9 +94,12 @@ internal fun SetupContent(batteryOptimized: Boolean?, notificationsEnabled: Bool
     }
 }
 
-/** Widens the content by [horizontal] on both sides, like a negative padding. */
-private fun Modifier.bleed(horizontal: Dp) = layout { measurable, constraints ->
+/** Widens the content by [horizontal] on both sides and overlaps [vertical] above and below, like a negative padding. */
+private fun Modifier.bleed(horizontal: Dp, vertical: Dp) = layout { measurable, constraints ->
     val extra = horizontal.roundToPx()
+    val overlap = vertical.roundToPx()
     val placeable = measurable.measure(constraints.offset(horizontal = 2 * extra))
-    layout(constraints.constrainWidth(placeable.width - 2 * extra), placeable.height) { placeable.place(-extra, 0) }
+    layout(constraints.constrainWidth(placeable.width - 2 * extra), (placeable.height - 2 * overlap).coerceAtLeast(0)) {
+        placeable.place(-extra, -overlap)
+    }
 }

@@ -90,7 +90,8 @@ fun SettingsScreen(model: SettingsState, operations: Operations, onOpenDiagnosti
                 item {
                     SegmentedListItem(onClick = { licenses = true }, shapes = ListItemDefaults.segmentedShapes(1, 2), colors = settingsItemColors(),
                         leadingContent = { Icon(AppIcons.Description, contentDescription = null) },
-                        supportingContent = { Text(stringResource(R.string.settings_licenses_body)) },
+                        // One line: a wrapped summary would make a three-line item, whose minimum height leaves a gap below the text.
+                        supportingContent = { Text(stringResource(R.string.settings_licenses_summary)) },
                     ) { Text(stringResource(R.string.settings_licenses)) }
                 }
             }
@@ -104,10 +105,19 @@ fun SettingsScreen(model: SettingsState, operations: Operations, onOpenDiagnosti
 @Composable
 internal fun settingsItemColors() = ListItemDefaults.segmentedColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
 
+/**
+ * The license file is laid out for an 80-column terminal: indented, hard-wrapped, with blank lines around it. Joins each
+ * paragraph into one line so it wraps to the screen, and drops the indentation and the leading and trailing blank lines.
+ * The first paragraph is the centered title block, whose lines stay separate.
+ */
+internal fun reflow(text: String): String = text.trim().split(Regex("\n\\s*\n")).mapIndexed { index, paragraph ->
+    paragraph.lines().map { it.trim() }.filter { it.isNotEmpty() }.joinToString(if (index == 0) "\n" else " ")
+}.joinToString("\n\n")
+
 @Composable
 private fun LicenseDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val text = remember { runCatching { context.assets.open("licenses/apache-2.0.txt").bufferedReader().use { it.readText() } }.getOrDefault("") }
+    val text = remember { runCatching { context.assets.open("licenses/apache-2.0.txt").bufferedReader().use { reflow(it.readText()) } }.getOrDefault("") }
     AlertDialog(onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.settings_licenses)) },
         text = {

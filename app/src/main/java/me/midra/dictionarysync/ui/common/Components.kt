@@ -6,12 +6,16 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
@@ -19,22 +23,26 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
 import java.text.NumberFormat
 import me.midra.dictionarysync.R
 import me.midra.dictionarysync.ui.sources.*
 
 /** Container/content colors that carry a status tone. Always paired with an icon and text, never color alone. */
-data class ToneColors(val container: Color, val content: Color, val accent: Color)
+data class ToneColors(val container: Color, val content: Color, val accent: Color, val onAccent: Color)
 
 @Composable
 fun toneColors(tone: Tone): ToneColors {
     val c = MaterialTheme.colorScheme
     return when (tone) {
-        Tone.Positive -> ToneColors(c.primaryContainer, c.onPrimaryContainer, c.primary)
-        Tone.Working -> ToneColors(c.secondaryContainer, c.onSecondaryContainer, c.secondary)
-        Tone.Attention -> ToneColors(c.tertiaryContainer, c.onTertiaryContainer, c.tertiary)
-        Tone.Problem -> ToneColors(c.errorContainer, c.onErrorContainer, c.error)
-        Tone.Neutral -> ToneColors(c.surfaceContainerHighest, c.onSurfaceVariant, c.onSurfaceVariant)
+        Tone.Positive -> ToneColors(c.primaryContainer, c.onPrimaryContainer, c.primary, c.onPrimary)
+        Tone.Working -> ToneColors(c.secondaryContainer, c.onSecondaryContainer, c.secondary, c.onSecondary)
+        Tone.Attention -> ToneColors(c.tertiaryContainer, c.onTertiaryContainer, c.tertiary, c.onTertiary)
+        Tone.Problem -> ToneColors(c.errorContainer, c.onErrorContainer, c.error, c.onError)
+        Tone.Neutral -> ToneColors(c.surfaceContainerHighest, c.onSurfaceVariant, c.onSurfaceVariant, c.surface)
     }
 }
 
@@ -125,37 +133,45 @@ fun intervalText(hours: Int): String =
 
 fun formatCount(count: Int): String = NumberFormat.getIntegerInstance().format(count)
 
-/** Icon + one line of status text in the tone's accent color. */
+/**
+ * Icon + one line of status text in the tone's accent color. With [detail], a second line explains a problem, and a
+ * failed or interrupted fetch says that the previous data is still in use.
+ */
 @Composable
 fun StatusLine(status: SourceStatus, modifier: Modifier = Modifier, detail: Boolean = true) {
     val colors = toneColors(status.tone)
-    Column(modifier) {
+    // The icon follows the text size, so it stays in proportion with large fonts.
+    val iconSize = with(LocalDensity.current) { MaterialTheme.typography.labelLarge.lineHeight.toDp() }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Icon(toneIcon(status.tone), contentDescription = null, tint = colors.accent, modifier = Modifier.size(18.dp))
+            Icon(toneIcon(status.tone), contentDescription = null, tint = colors.accent, modifier = Modifier.size(iconSize))
             Text(statusText(status), style = MaterialTheme.typography.labelLarge, color = if (status.tone == Tone.Neutral) colors.content else colors.accent)
         }
-        if (detail && status.reason != null && status.tone in setOf(Tone.Problem, Tone.Attention)) {
-            Text(reasonText(status.reason), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 24.dp))
-        }
+        if (!detail) return@Column
+        val lines = listOfNotNull(
+            status.reason?.takeIf { status.tone == Tone.Problem || status.tone == Tone.Attention }?.let { reasonText(it) },
+            if (status.kind == StatusKind.FetchFailed || status.kind == StatusKind.FetchInterrupted) stringResource(R.string.status_previous_data) else null,
+        )
+        if (lines.isNotEmpty()) Text(lines.joinToString("\n"), style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = iconSize + 6.dp))
     }
 }
 
-/** Prominent, actionable notice above a list. */
+/** Prominent, actionable notice above a list. The action is a filled button in the tone's accent, so it reads as a button. */
 @Composable
 fun Banner(tone: Tone, title: String, body: String?, modifier: Modifier = Modifier, action: String? = null, onAction: (() -> Unit)? = null, enabled: Boolean = true) {
     val colors = toneColors(tone)
     Surface(color = colors.container, contentColor = colors.content, shape = MaterialTheme.shapes.largeIncreased, modifier = modifier.fillMaxWidth()) {
-        Column(Modifier.padding(start = 20.dp, end = 12.dp, top = 16.dp, bottom = if (action != null) 8.dp else 16.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Icon(toneIcon(tone), contentDescription = null, modifier = Modifier.padding(top = 2.dp))
+                Icon(toneIcon(tone), contentDescription = null, tint = colors.accent)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(title, style = MaterialTheme.typography.titleMediumEmphasized, modifier = Modifier.semantics { heading() })
                     body?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
                 }
             }
-            if (action != null && onAction != null) TextButton(onClick = onAction, enabled = enabled, modifier = Modifier.align(Alignment.End),
-                colors = ButtonDefaults.textButtonColors(contentColor = colors.content)) { Text(action) }
+            if (action != null && onAction != null) Button(onClick = onAction, enabled = enabled, modifier = Modifier.align(Alignment.End),
+                colors = ButtonDefaults.buttonColors(containerColor = colors.accent, contentColor = colors.onAccent)) { Text(action) }
         }
     }
 }
@@ -164,6 +180,26 @@ fun Banner(tone: Tone, title: String, body: String?, modifier: Modifier = Modifi
 fun SectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(text, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
         modifier = modifier.padding(horizontal = 16.dp, vertical = 8.dp).semantics { heading() })
+}
+
+/**
+ * Full-screen dialog drawn edge to edge. The dialog has its own window, so its system bar icons are set here to match the
+ * theme; otherwise they keep the platform default and can disappear against a light surface.
+ */
+@Composable
+fun FullScreenDialog(onDismissRequest: () -> Unit, content: @Composable () -> Unit) {
+    Dialog(onDismissRequest = onDismissRequest, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        val view = LocalView.current
+        val light = MaterialTheme.colorScheme.surface.luminance() > 0.5f
+        SideEffect {
+            val window = (view.parent as? DialogWindowProvider)?.window ?: return@SideEffect
+            WindowCompat.getInsetsController(window, view).apply {
+                isAppearanceLightStatusBars = light
+                isAppearanceLightNavigationBars = light
+            }
+        }
+        content()
+    }
 }
 
 /** Error dialog with a short explanation and the internal code for support. */
@@ -204,9 +240,10 @@ fun TooltipIconButton(icon: ImageVector, label: String, onClick: () -> Unit, ena
  * place, so it stays a plain field rather than a search bar that expands into its own results view.
  */
 @Composable
-fun SearchField(query: String, onQueryChange: (String) -> Unit, placeholder: String, modifier: Modifier = Modifier) {
+fun SearchField(query: String, onQueryChange: (String) -> Unit, placeholder: String, modifier: Modifier = Modifier,
+    containerColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh) {
     val focus = LocalFocusManager.current
-    val container = MaterialTheme.colorScheme.surfaceContainerHigh
+    val container = containerColor
     TextField(query, onQueryChange, singleLine = true,
         placeholder = { Text(placeholder) },
         leadingIcon = { Icon(AppIcons.Search, contentDescription = null) },

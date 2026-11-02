@@ -26,9 +26,9 @@ class SyncReviewUiTest {
         compose.setContent { DictionarySyncTheme { SyncReview(preview(PlanPurpose.RESYNC), false,
             listOf(SourceEntity("A", "ソース甲", "https://example.org/a"), SourceEntity("B", "ソース乙", "https://example.org/b")),
             {}, {}, { applied = true }, {}) } }
-        compose.onNodeWithText("関連ソースを再反映").assertIsDisplayed()
-        compose.onNodeWithTag("sync-all-differences").performScrollToNode(hasText("まとめて処理するソース: ソース甲、ソース乙"))
-        compose.onNodeWithText("まとめて処理するソース: ソース甲、ソース乙").assertIsDisplayed()
+        compose.onNodeWithText("関連する辞書を再反映").assertIsDisplayed()
+        compose.onNodeWithTag("sync-all-differences").performScrollToNode(hasText("まとめて処理する辞書: ソース甲、ソース乙"))
+        compose.onNodeWithText("まとめて処理する辞書: ソース甲、ソース乙").assertIsDisplayed()
         compose.onNodeWithText("端末側で編集された単語は残します。", substring = true).assertExists()
         compose.onNodeWithText("再反映を実行").performClick()
         assertTrue(applied)
@@ -68,7 +68,7 @@ class SyncReviewUiTest {
         compose.onNodeWithTag("differences-search").performClick().performTextInput("保持")
         compose.onNodeWithText("きょうゆう → 共有保持語 [ja]").assertExists()
         compose.onNodeWithText("よみ25 → 追加語25 [ja]").assertDoesNotExist()
-        compose.onNodeWithText("追加 0・対象外 1").assertExists()
+        compose.onNodeWithText("追加 0 · 対象外 1").assertExists()
         assertFalse(applied)
     }
 }

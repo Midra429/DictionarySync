@@ -27,8 +27,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.offset
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import me.midra.dictionarysync.R
 import me.midra.dictionarysync.data.local.SourceEntity
 import me.midra.dictionarysync.ui.common.*
@@ -83,8 +81,7 @@ fun SourceEditorDialog(source: SourceEntity?, busy: Boolean, fetching: Boolean, 
     onStop: () -> Unit, onDismiss: () -> Unit, save: (SourceDraft) -> Unit) {
     val state = rememberSourceDraftInput(source)
     // Back while fetching stops the fetch and keeps the form; otherwise it closes the form.
-    Dialog(onDismissRequest = { if (fetching) onStop() else if (!busy) onDismiss() },
-        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+    FullScreenDialog(onDismissRequest = { if (fetching) onStop() else if (!busy) onDismiss() }) {
         SourceForm(source, busy, onDismiss, retryAt, error, onDismissError, state, fetching, onStop, save)
     }
 }
@@ -195,7 +192,10 @@ private fun IntervalGroup(selected: Int, enabled: Boolean, choose: (Int) -> Unit
         // Whole pixels, with the remainder going to the first buttons, so the row ends exactly at the fields' edge.
         val shares = INTERVALS.indices.map { with(density) { (space / INTERVALS.size + if (it < space % INTERVALS.size) 1 else 0).toDp() } }
         // No fillMaxWidth: the shares already add up to the row, and a minimum width breaks ButtonGroup's overflow measuring.
-        ButtonGroup(overflowIndicator = { ButtonGroupDefaults.OverflowIndicator(it, enabled = enabled) },
+        // The indicator takes the unselected buttons' colors: filled primary would read as the selected interval.
+        val overflowColors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant)
+        ButtonGroup(overflowIndicator = { ButtonGroupDefaults.OverflowIndicator(it, enabled = enabled, colors = overflowColors) },
             horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween)) {
             INTERVALS.forEachIndexed { index, hours ->
                 // A custom item, because toggleableItem's fixed side padding is wider than these labels leave room for and
